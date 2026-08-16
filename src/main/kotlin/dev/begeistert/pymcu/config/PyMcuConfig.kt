@@ -30,6 +30,13 @@ data class PyMcuConfig(
     /** Compat flavors: `stdlib = ["micropython"]` / `["circuitpython"]`. */
     val stdlib: List<String> = emptyList(),
     val flash: PyMcuFlashConfig = PyMcuFlashConfig(),
+    /**
+     * `stdlib_path` — a local stdlib checkout, injected ahead of every installed
+     * package. Someone developing the stdlib has the compiler using their working
+     * tree, so the editor has to resolve there too or go-to-definition lands on
+     * the installed copy with nothing saying why.
+     */
+    val stdlibPath: String? = null,
     /** `[tool.pymcu.toolchain] name = "..."`. */
     val toolchain: String? = null,
     /** `[tool.pymcu.config]` — PIC configuration words (FOSC, WDTE…). */

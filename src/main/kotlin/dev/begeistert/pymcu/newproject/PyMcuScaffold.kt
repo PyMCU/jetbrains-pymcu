@@ -30,6 +30,9 @@ object PyMcuScaffold {
         return when {
             c.startsWith("at") -> "[avr]"
             c == "rp2040" || c == "rp2350" -> "[arm]"
+            c.startsWith("pic") -> "[pic]"
+            // No riscv extra exists: pymcu-backend-riscv is not on PyPI, and an
+            // extra that cannot resolve fails harder than a missing one.
             else -> ""
         }
     }
@@ -72,7 +75,7 @@ object PyMcuScaffold {
         return when (settings.stdlib) {
             "micropython" -> microPythonBlink(target)
             "circuitpython" -> circuitPythonBlink(target)
-            else -> nativeBlink(target)
+            else -> nativeBlink(target, settings.effectiveChip)
         }
     }
 
@@ -117,22 +120,69 @@ object PyMcuScaffold {
         "    time.sleep(0.5)",
     ).joinToString("\n") + "\n"
 
-    private fun nativeBlink(target: String): String = listOf(
-        "# PyMCU — target: $target  ·  native HAL",
+    /**
+     * Register-level, per chip, mirroring `_chip_imports` in the driver.
+     *
+     * The previous version emitted `Pin("PB5", Pin.OUT)` for every target, which
+     * is an AVR port name — `hal/rp2040/gpio.py` declares `pin: uint8`, a GP
+     * index, so a native RP2040 project shipped a main.py that could not compile.
+     * The driver does not use the HAL facade here at all; it writes the chip's
+     * own registers, which is unambiguous per architecture.
+     */
+    private fun nativeBlink(target: String, chip: String?): String {
+        val c = chip?.lowercase()
+        val header = "# PyMCU — target: $target  ·  native registers"
+        val (imports, body) = when {
+            c == null -> return nativeUnknownChip(target)
+
+            c.startsWith("at") -> listOf(
+                "from pymcu.chips.$c import DDRB, PORTB, DDB5, PORTB5",
+                "from pymcu.time import delay_ms",
+            ) to listOf(
+                "DDRB[DDB5] = 1",
+                "while True:",
+                "    PORTB[PORTB5] = 1",
+                "    delay_ms(500)",
+                "    PORTB[PORTB5] = 0",
+                "    delay_ms(500)",
+            )
+
+            c.startsWith("pic") -> listOf(
+                "from pymcu.chips.$c import TRISB, PORTB, RB0",
+            ) to listOf(
+                "TRISB[RB0] = 0",
+                "PORTB[RB0] = 1",
+            )
+
+            else -> listOf(
+                "from pymcu.chips.$c import PORTB",
+            ) to listOf(
+                "PORTB[0] = 1",
+            )
+        }
+
+        // The native targets keep `def main():`, which is the shape their
+        // examples and the driver's own fixtures use.
+        return (listOf(header) + imports + listOf("", "", "def main():") +
+            body.map { "    $it" }).joinToString("\n") + "\n"
+    }
+
+    /**
+     * No chip to import registers from — the wizard cannot resolve a board alias
+     * without the catalog, which is the same outage that put us in the fallback.
+     * Say so in the file rather than emit something that will not compile.
+     */
+    private fun nativeUnknownChip(target: String): String = listOf(
+        "# PyMCU — target: $target",
         "#",
-        "# The native pymcu.hal API is still moving during the alpha. For an API that",
-        "# will not change under you, pick a compat stdlib instead.",
-        "from pymcu.hal.gpio import Pin",
-        "from pymcu.time import delay_ms",
+        "# The chip could not be determined without the pymcu CLI, and a native",
+        "# program addresses its chip's registers by name. Once the CLI is",
+        "# installed, `pymcu new` scaffolds this properly; or import the registers",
+        "# from pymcu.chips.<your chip> and drive them here.",
         "",
         "",
         "def main():",
-        "    led = Pin(\"PB5\", Pin.OUT)",
-        "",
-        "    while True:",
-        "        led.high()",
-        "        delay_ms(500)",
-        "        led.low()",
-        "        delay_ms(500)",
+        "    pass",
     ).joinToString("\n") + "\n"
+
 }

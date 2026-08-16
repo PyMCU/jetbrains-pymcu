@@ -50,6 +50,7 @@ object PyMcuConfigReader {
                 fuseHigh = flash["fuse_high"].asString(),
                 fuseExt = flash["fuse_ext"].asString(),
             ),
+            stdlibPath = pymcu["stdlib_path"].asString(),
             toolchain = (pymcu["toolchain"] as? Map<*, *>)?.get("name")?.asString(),
             configWords = (pymcu["config"] as? Map<*, *>)
                 ?.mapNotNull { (k, v) ->

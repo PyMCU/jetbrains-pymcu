@@ -105,7 +105,9 @@ class ScaffoldTest {
         assertEquals("[avr]", PyMcuScaffold.compilerExtra("attiny85"))
         assertEquals("[arm]", PyMcuScaffold.compilerExtra("rp2040"))
         assertEquals("[arm]", PyMcuScaffold.compilerExtra("rp2350"))
-        assertEquals("", PyMcuScaffold.compilerExtra("pic16f84a"))
+        // No riscv extra is published, so an empty one is correct there.
+        assertEquals("", PyMcuScaffold.compilerExtra("ch32v003"))
+        assertEquals("[pic]", PyMcuScaffold.compilerExtra("pic16f84a"))
         assertEquals("", PyMcuScaffold.compilerExtra(null))
     }
 
@@ -141,6 +143,47 @@ class ScaffoldTest {
         val native = microPython.copy(stdlib = "")
         assertTrue(PyMcuScaffold.mainPy(native).contains("def main():"))
         assertFalse(PyMcuScaffold.mainPy(microPython).contains("def main():"))
+    }
+
+    /**
+     * The regression: the native starter emitted `Pin("PB5", Pin.OUT)` for every
+     * target. That is an AVR port name, and hal/rp2040/gpio.py takes a uint8 GP
+     * index, so a native RP2040 project shipped a main.py that could not compile.
+     */
+    @Test
+    fun `the native starter addresses the chip's own registers`() {
+        val avr = PyMcuScaffold.mainPy(microPython.copy(stdlib = "", resolvedChip = "atmega328p"))
+        assertTrue(avr.contains("from pymcu.chips.atmega328p import DDRB, PORTB, DDB5, PORTB5"))
+        assertTrue(avr.contains("PORTB[PORTB5] = 1"))
+
+        val pic = PyMcuScaffold.mainPy(
+            PyMcuNewProjectSettings(board = null, chip = "pic16f877a", stdlib = "")
+        )
+        assertTrue(pic.contains("from pymcu.chips.pic16f877a import TRISB, PORTB, RB0"))
+
+        val rp = PyMcuScaffold.mainPy(microPython.copy(stdlib = "", resolvedChip = "rp2040"))
+        assertTrue(rp.contains("from pymcu.chips.rp2040 import PORTB"))
+    }
+
+    @Test
+    fun `no starter claims a Pin API that the chip does not have`() {
+        for (chip in listOf("atmega328p", "pic16f877a", "rp2040", "ch32v003")) {
+            val source = PyMcuScaffold.mainPy(microPython.copy(stdlib = "", resolvedChip = chip))
+            assertFalse("$chip got an AVR port name", source.contains("\"PB5\""))
+        }
+    }
+
+    /** No catalog means no chip, and a native program needs one by name. */
+    @Test
+    fun `an unresolvable chip yields a starter that says so instead of one that breaks`() {
+        val source = PyMcuScaffold.mainPy(
+            PyMcuNewProjectSettings(board = "arduino_uno", chip = null, stdlib = "", resolvedChip = null)
+        )
+        // The import statement, not the substring: the explanatory comment
+        // mentions `pymcu.chips.<your chip>` on purpose.
+        assertFalse(source.lines().any { it.startsWith("from pymcu.chips.") })
+        assertTrue(source.contains("def main():"))
+        assertTrue(source.contains("pymcu.chips.<your chip>"))
     }
 
     @Test

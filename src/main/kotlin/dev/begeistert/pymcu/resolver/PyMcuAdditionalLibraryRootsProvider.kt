@@ -57,6 +57,9 @@ class PyMcuAdditionalLibraryRootsProvider : AdditionalLibraryRootsProvider() {
             lfs.findFileByNioFile(path)?.let { if (it.isDirectory) roots.add(it) }
         }
 
+        // A local stdlib checkout the build is told to prefer.
+        config.stdlibPath?.let { add(Path.of(basePath).resolve(it).normalize()) }
+
         // The compat layer's implementation: bare `import machine` and friends.
         val sitePackages = PyMcuVenv.sitePackages(basePath)
         if (sitePackages != null) {

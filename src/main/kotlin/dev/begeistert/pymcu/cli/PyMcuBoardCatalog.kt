@@ -90,32 +90,48 @@ class PyMcuBoardCatalogService(private val project: Project) {
             return BoardCatalog(boards, groups, chips)
         }
 
+        /**
+         * Only reached when the CLI cannot be run — which is exactly when the
+         * user has no other way to see the list, so it is worth keeping in step.
+         * Regenerated from `pymcu boards --json`; it drifted by eight boards
+         * before anyone noticed, all of them ones the driver had added.
+         */
         val FALLBACK = BoardCatalog(
             boards = listOf(
                 BoardInfo("arduino_uno", "atmega328p", "Arduino", "avr", "avrdude"),
                 BoardInfo("arduino_nano", "atmega328p", "Arduino", "avr", "avrdude"),
                 BoardInfo("arduino_mega", "atmega2560", "Arduino", "avr", "avrdude"),
                 BoardInfo("arduino_micro", "atmega32u4", "Arduino", "avr", "avrdude"),
-                BoardInfo("raspberry_pi_pico", "rp2040", "Raspberry Pi", "rp2040", "rp2040"),
-                BoardInfo("raspberry_pi_pico2", "rp2350", "Raspberry Pi", "rp2040", "rp2040"),
-                BoardInfo("adafruit_trinket", "attiny85", "Adafruit", "avr", "avrdude"),
                 BoardInfo("digispark", "attiny85", "Digispark", "avr", "avrdude"),
+                BoardInfo("adafruit_trinket", "attiny85", "Adafruit", "avr", "avrdude"),
                 BoardInfo("attiny85", "attiny85", "ATtiny 8-pin (bare chip)", "avr", "avrdude"),
                 BoardInfo("attiny45", "attiny45", "ATtiny 8-pin (bare chip)", "avr", "avrdude"),
                 BoardInfo("attiny25", "attiny25", "ATtiny 8-pin (bare chip)", "avr", "avrdude"),
                 BoardInfo("attiny13", "attiny13", "ATtiny 8-pin (bare chip)", "avr", "avrdude"),
+                BoardInfo("attiny13a", "attiny13a", "ATtiny 8-pin (bare chip)", "avr", "avrdude"),
                 BoardInfo("attiny84", "attiny84", "ATtiny 14-pin (bare chip)", "avr", "avrdude"),
+                BoardInfo("attiny44", "attiny44", "ATtiny 14-pin (bare chip)", "avr", "avrdude"),
+                BoardInfo("attiny24", "attiny24", "ATtiny 14-pin (bare chip)", "avr", "avrdude"),
                 BoardInfo("attiny2313", "attiny2313", "ATtiny 20-pin (bare chip)", "avr", "avrdude"),
+                BoardInfo("attiny4313", "attiny4313", "ATtiny 20-pin (bare chip)", "avr", "avrdude"),
+                BoardInfo("raspberry_pi_pico", "rp2040", "Raspberry Pi", "rp2040", "rp2040"),
+                BoardInfo("pico", "rp2040", null, "rp2040", "rp2040"),
+                BoardInfo("rp2040", "rp2040", null, "rp2040", "rp2040"),
+                BoardInfo("raspberry_pi_pico2", "rp2350", "Raspberry Pi", "rp2040", "rp2040"),
+                BoardInfo("pico2", "rp2350", null, "rp2040", "rp2040"),
+                BoardInfo("rp2350", "rp2350", null, "rp2040", "rp2040"),
             ),
             groups = mapOf(
                 "Arduino" to listOf("arduino_uno", "arduino_nano", "arduino_mega", "arduino_micro"),
                 "Raspberry Pi" to listOf("raspberry_pi_pico", "raspberry_pi_pico2"),
                 "Adafruit" to listOf("adafruit_trinket"),
                 "Digispark" to listOf("digispark"),
-                "ATtiny 8-pin (bare chip)" to listOf("attiny85", "attiny45", "attiny25", "attiny13"),
-                "ATtiny 14-pin (bare chip)" to listOf("attiny84"),
-                "ATtiny 20-pin (bare chip)" to listOf("attiny2313"),
+                "ATtiny 8-pin (bare chip)" to listOf("attiny85", "attiny45", "attiny25", "attiny13", "attiny13a"),
+                "ATtiny 14-pin (bare chip)" to listOf("attiny84", "attiny44", "attiny24"),
+                "ATtiny 20-pin (bare chip)" to listOf("attiny2313", "attiny4313"),
             ),
+            // The driver only lists chips it has definitions for, and that needs
+            // pymcu-stdlib installed — which the CLI being unreadable rules out.
             chips = emptyList(),
         )
     }

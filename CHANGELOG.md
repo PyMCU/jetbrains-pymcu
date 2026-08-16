@@ -5,6 +5,25 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 ## [Unreleased]
 
 ### Fixed (from a plugin/driver divergence audit)
+- **The offline starter emitted AVR register names for every chip.** Creating a
+  native-HAL project before the CLI is installed wrote `Pin("PB5", Pin.OUT)`,
+  which `hal/rp2040/gpio.py` cannot accept — it takes a uint8 GP index — so an
+  RP2040 or PIC project shipped a `main.py` that could not compile. It now
+  mirrors `_chip_imports` and writes the chip's own registers, and says so
+  plainly when the chip cannot be determined at all.
+- The offline scaffold omitted the `[pic]` compiler extra, so a PIC project
+  installed a compiler with no PIC backend.
+- `stdlib_path` was invisible to the IDE. The build injects that directory ahead
+  of every installed package, so anyone developing the stdlib against a checkout
+  had the editor resolving to the released copy while the compiler used their
+  working tree. It is now first in the resolver and indexed as a library root.
+- The built-in board list had drifted by eight boards, all of them ones the
+  driver had added — and it is only ever shown when the CLI cannot be read,
+  which is exactly when the user has no other way to see the list.
+- PIC configuration words have a field in the configuration dialog. `pymcu new`
+  writes the table empty and invites the user to fill it in; the dialog offered
+  AVR users a form for their fuses and left PIC users hand-editing TOML for the
+  exact equivalent.
 - **Sync installed nothing on a requirements.txt project.** Detection answered
   "pip" *because* `requirements.txt` was there, then ran `pip install -e .`,
   which reads only `[project].dependencies` — installing the project, no

@@ -37,8 +37,9 @@ import java.nio.file.Path
  *
  * The search order mirrors the compiler's include order, so what the editor
  * shows is the file the build compiles:
- *   1. `dist/_generated`                — the generated `board` module
- *   2. `<site-packages>/pymcu_<flavor>` — the compat layer's implementation
+ *   1. `stdlib_path`, when the project sets one — a local stdlib checkout
+ *   2. `dist/_generated`                — the generated `board` module
+ *   3. `<site-packages>/pymcu_<flavor>` — the compat layer's implementation
  *
  * The generated directory goes first because that is what `build.py` does —
  * `extra_includes.insert(0, generated_dir)`, so the board shim wins. No module
@@ -60,16 +61,21 @@ class PyMcuImportResolver : PyImportResolver {
         val config = PyMcuProjectService.config(project) ?: return null
         val basePath = project.basePath ?: return null
 
-        val target = findIn(searchRoots(basePath, config.stdlib), components) ?: return null
+        val target = findIn(searchRoots(basePath, config.stdlib, config.stdlibPath), components)
+            ?: return null
         return PsiManager.getInstance(project).let { psi ->
             if (target.isDirectory) psi.findDirectory(target) else psi.findFile(target)
         }
     }
 
     /** The include path, in the order the compiler resolves it. */
-    private fun searchRoots(basePath: String, flavors: List<String>): List<Path> {
+    private fun searchRoots(basePath: String, flavors: List<String>, stdlibPath: String?): List<Path> {
         val sitePackages = PyMcuVenv.sitePackages(basePath)
         return buildList {
+            // `stdlib_path` goes ahead of everything installed, which is what
+            // build.py does with it — otherwise someone developing the stdlib has
+            // the editor reading the released copy and the compiler their own.
+            stdlibPath?.let { add(Path.of(basePath).resolve(it).normalize()) }
             add(Path.of(basePath, "dist", "_generated"))
             if (sitePackages != null) {
                 for (flavor in flavors) add(sitePackages.resolve("pymcu_$flavor"))

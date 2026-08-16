@@ -107,6 +107,13 @@ class PyMcuConfigureDialog private constructor(
     private val fuseLowField = JBTextField()
     private val fuseHighField = JBTextField()
     private val fuseExtField = JBTextField()
+    /**
+     * `[tool.pymcu.config]` — the PIC configuration words. `pymcu new` writes the
+     * table empty with a comment inviting the user to fill in FOSC and WDTE, and
+     * this dialog offered AVR users a form for their fuses while leaving PIC
+     * users to hand-edit TOML for the exact equivalent.
+     */
+    private val configWordsField = JBTextField()
     private val archLabel = JBLabel()
 
     private val stdlibValues = listOf("", "micropython", "circuitpython")
@@ -140,6 +147,8 @@ class PyMcuConfigureDialog private constructor(
         fuseLowField.text = config.flash.fuseLow.orEmpty()
         fuseHighField.text = config.flash.fuseHigh.orEmpty()
         fuseExtField.text = config.flash.fuseExt.orEmpty()
+        configWordsField.text = config.configWords.entries
+            .joinToString(", ") { "${it.key}=${it.value}" }
     }
 
     // ── UI ───────────────────────────────────────────────────────────────────
@@ -167,6 +176,7 @@ class PyMcuConfigureDialog private constructor(
             .addLabeledComponent(JBLabel("Fuse low:"), fuseLowField, 1, false)
             .addLabeledComponent(JBLabel("Fuse high:"), fuseHighField, 1, false)
             .addLabeledComponent(JBLabel("Fuse extended:"), fuseExtField, 1, false)
+            .addLabeledComponent(JBLabel("Config words:"), configWordsField, 1, false)
             .addComponentFillVertically(JPanel(), 0)
             .panel
 
@@ -194,6 +204,9 @@ class PyMcuConfigureDialog private constructor(
         fuseLowField.isEnabled = isAvr
         fuseHighField.isEnabled = isAvr
         fuseExtField.isEnabled = isAvr
+        // Config words are the PIC equivalent, passed to the compiler as
+        // --config KEY=VALUE rather than to the programmer.
+        configWordsField.isEnabled = arch == "PIC"
     }
 
     private fun detectPort() {
@@ -206,6 +219,14 @@ class PyMcuConfigureDialog private constructor(
         portField.text = ports.first()
     }
 
+    /** "FOSC=XT, WDTE=OFF" as the pairs the driver passes as --config KEY=VALUE. */
+    private fun parseConfigWords(text: String): List<Pair<String, String>> =
+        text.split(',')
+            .mapNotNull { entry ->
+                val (key, value) = entry.split('=', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+                key.trim().takeIf { it.isNotEmpty() }?.let { it to value.trim() }
+            }
+
     override fun doValidate(): ValidationInfo? {
         val frequency = frequencyField.text.trim().replace("_", "").toLongOrNull()
         if (frequency == null || frequency <= 0) {
@@ -216,6 +237,10 @@ class PyMcuConfigureDialog private constructor(
         }
         if (selectedChip().isNullOrBlank()) {
             return ValidationInfo("Pick a board, or type a chip id.", chipCombo)
+        }
+        val words = configWordsField.text.trim()
+        if (configWordsField.isEnabled && words.isNotEmpty() && parseConfigWords(words).isEmpty()) {
+            return ValidationInfo("Config words are KEY=VALUE pairs: FOSC=XT, WDTE=OFF.", configWordsField)
         }
         for (field in listOf(fuseLowField, fuseHighField, fuseExtField)) {
             val value = field.text.trim()
