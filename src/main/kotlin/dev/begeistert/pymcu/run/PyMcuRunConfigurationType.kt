@@ -25,7 +25,12 @@ class PyMcuRunConfigurationType : ConfigurationType {
     override fun getConfigurationTypeDescription(): String =
         "Run pymcu build, flash, clean, sync or stubs"
 
-    override fun getIcon(): Icon = PyMcuIcons.PyMcu
+    /**
+     * The colour logo, not the monochrome glyph. Run-configuration icons sit in
+     * a list of product marks (Gradle's elephant, npm's logo) and are expected
+     * to be recognisable; the single-colour rule applies to tool-window stripes.
+     */
+    override fun getIcon(): Icon = PyMcuIcons.Logo
 
     override fun getId(): String = "PyMcuRunConfiguration"
 

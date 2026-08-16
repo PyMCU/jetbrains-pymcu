@@ -4,6 +4,23 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **The New Project wizard now scaffolds with `pymcu new` instead of a template
+  of its own.** The hand-written one omitted `[tool.pymcu.toolchain]` and
+  `[tool.pymcu.flash]`, so generated projects had no programmer to flash with;
+  it omitted the Makefile; and it pinned dependencies to a generic floor rather
+  than the versions actually installed. All of that is `new.py`'s job and it
+  already does it. The built-in template survives only as the fallback for
+  creating a project before the CLI is installed, and says so when it is used.
+- **Build could fail with "Cannot run program pymcu" on a machine where pymcu
+  works.** An IDE launched from the Dock has no login shell's PATH, and the
+  documented install puts the binary in `~/.local/bin`. The lookup now covers
+  the project virtualenv, PATH, `~/.local/bin` and the Homebrew prefixes, and a
+  configuration that still cannot find it says what to do instead of failing at
+  the process layer.
+- The run-configuration icon is the project logo. It was the monochrome
+  tool-window glyph, which is the wrong register for a list of product marks.
+
 ### Changed
 - **Resolution lands on source, never on a generated stub.** Go to declaration on `pin.value(1)`
   now opens the implementation — the sentinel-255 trick, the `@inline`, the register write —

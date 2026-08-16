@@ -7,6 +7,7 @@ import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunConfigurationBase
 import com.intellij.execution.configurations.RunnerSettings
+import com.intellij.execution.configurations.RuntimeConfigurationError
 import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.process.KillableColoredProcessHandler
 import com.intellij.execution.process.ProcessHandler
@@ -99,10 +100,20 @@ class PyMcuRunConfiguration(
         addAll(ParametersListUtil.parse(arguments))
     }
 
+    /**
+     * Checked before the Run button is enabled, so a missing CLI is a readable
+     * message in the configuration dialog rather than "Cannot run program pymcu"
+     * from the process layer.
+     */
+    override fun checkConfiguration() {
+        if (PyMcuCli.findExecutable(project) == null) throw RuntimeConfigurationError(CLI_NOT_FOUND)
+    }
+
     override fun getState(executor: Executor, environment: ExecutionEnvironment): CommandLineState {
         val basePath = project.basePath
             ?: throw ExecutionException("Cannot determine the project base directory.")
-        val executable = PyMcuCli.executable(project)
+        val executable = PyMcuCli.findExecutable(project)?.absolutePath
+            ?: throw ExecutionException(CLI_NOT_FOUND)
         val args = buildArguments()
 
         return object : CommandLineState(environment) {
@@ -126,6 +137,13 @@ class PyMcuRunConfiguration(
                 return handler
             }
         }
+    }
+
+    private companion object {
+        const val CLI_NOT_FOUND =
+            "The pymcu CLI was not found. It is looked for in the project virtualenv, on PATH, " +
+                "and in ~/.local/bin. Install it with `pipx install pymcu-compiler`, run " +
+                "Sync Project, or set an explicit path in Settings | Tools | PyMCU."
     }
 
     // ── editor ───────────────────────────────────────────────────────────────

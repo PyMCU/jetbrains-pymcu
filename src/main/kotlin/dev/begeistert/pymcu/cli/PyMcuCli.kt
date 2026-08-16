@@ -1,6 +1,7 @@
 package dev.begeistert.pymcu.cli
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.execution.configurations.PathEnvironmentVariableUtil
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -31,33 +32,99 @@ object PyMcuCli {
      * an explicit setting wins, then the project's own virtualenv (which is
      * what `pymcu` re-execs into anyway), then bare `pymcu` off PATH.
      */
-    fun executable(project: Project?): String {
-        val configured = PyMcuSettings.getInstance().executablePath.trim()
-        if (configured.isNotEmpty() && configured != "pymcu") return configured
+    fun executable(project: Project?): String =
+        findExecutable(project)?.absolutePath ?: "pymcu"
 
-        val basePath = project?.basePath
-        if (basePath != null) {
+    /**
+     * The `pymcu` binary, or null when it cannot be found anywhere.
+     *
+     * WHY it looks past PATH: an IDE launched from the Dock or the Start menu
+     * does not inherit a login shell's PATH, and the usual install is
+     * `pipx install pymcu-compiler`, which puts the binary in `~/.local/bin` —
+     * a directory such an IDE has never heard of. Falling back to the bare name
+     * there produces "Cannot run program pymcu", which tells the user nothing
+     * about a tool they can see working in their terminal.
+     */
+    fun findExecutable(project: Project?): File? = resolve(
+        configured = PyMcuSettings.getInstance().executablePath,
+        projectBase = project?.basePath,
+        onPath = { PathEnvironmentVariableUtil.findInPath(binaryName) },
+    )
+
+    /**
+     * The search order, separated from the services it consults so it can be
+     * asserted directly. [onPath] is the PATH lookup, which only means anything
+     * inside a running IDE.
+     */
+    fun resolve(
+        configured: String?,
+        projectBase: String?,
+        onPath: () -> File?,
+        installDirectories: List<File> = commonInstallDirectories(),
+    ): File? {
+        val explicit = configured?.trim().orEmpty()
+        if (explicit.isNotEmpty() && explicit != "pymcu") {
+            // An explicit setting is an instruction, not a hint: if it is wrong,
+            // say so rather than quietly running some other pymcu.
+            return File(explicit).takeIf { it.isFile }
+        }
+
+        // The project's own environment first: its pinned versions are the ones
+        // that match the project, and the CLI re-execs into it anyway.
+        if (projectBase != null) {
             for (venv in listOf(".venv", "venv")) {
-                val candidate = if (isWindows)
-                    File(basePath, "$venv/Scripts/pymcu.exe")
-                else
-                    File(basePath, "$venv/bin/pymcu")
-                if (candidate.isFile) return candidate.absolutePath
+                venvExecutable(File(projectBase, venv))?.let { return it }
             }
         }
-        return "pymcu"
+
+        onPath()?.takeIf { it.isFile }?.let { return it }
+
+        return installDirectories.map { File(it, binaryName) }.firstOrNull { it.isFile }
     }
+
+    private fun venvExecutable(venv: File): File? {
+        val candidate = if (isWindows) File(venv, "Scripts/pymcu.exe") else File(venv, "bin/pymcu")
+        return candidate.takeIf { it.isFile }
+    }
+
+    /** Where the documented install methods put it, in order of likelihood. */
+    fun commonInstallDirectories(): List<File> {
+        val home = System.getProperty("user.home") ?: return emptyList()
+        return if (isWindows) {
+            listOf(File(home, ".local/bin"), File(home, "AppData/Roaming/Python/Scripts"))
+        } else {
+            listOf(
+                File(home, ".local/bin"),      // pipx, pip --user
+                File("/opt/homebrew/bin"),     // Homebrew on Apple silicon
+                File("/usr/local/bin"),        // Homebrew on Intel, manual installs
+            )
+        }
+    }
+
+    val binaryName: String get() = if (isWindows) "pymcu.exe" else "pymcu"
 
     /** Runs `pymcu <args>` in the project directory, capturing stdout and stderr. */
     fun run(project: Project?, vararg args: String, timeoutMs: Int = 60_000): CliResult =
         runIn(project?.basePath, executable(project), args.toList(), timeoutMs)
 
-    /** Runs an arbitrary command line in [workDir], capturing its output. */
-    fun runIn(workDir: String?, exe: String, args: List<String>, timeoutMs: Int = 60_000): CliResult {
+    /**
+     * Runs an arbitrary command line in [workDir], capturing its output.
+     *
+     * [stdin] is for the few driver commands that still ask a question once
+     * every flag has been supplied; without it they see EOF and abort.
+     */
+    fun runIn(
+        workDir: String?,
+        exe: String,
+        args: List<String>,
+        timeoutMs: Int = 60_000,
+        stdin: File? = null,
+    ): CliResult {
         val commandLine = GeneralCommandLine(listOf(exe) + args)
             .withCharset(StandardCharsets.UTF_8)
             .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
         if (workDir != null) commandLine.withWorkDirectory(workDir)
+        if (stdin != null) commandLine.withInput(stdin)
 
         return try {
             val output = CapturingProcessHandler(commandLine).runProcess(timeoutMs, true)

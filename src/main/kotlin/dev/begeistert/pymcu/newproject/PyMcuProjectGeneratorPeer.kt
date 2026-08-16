@@ -51,7 +51,10 @@ class PyMcuProjectGeneratorPeer : ProjectGeneratorPeer<PyMcuNewProjectSettings> 
     private val chipField = JBTextField()
     private val frequencyCombo = ComboBox(FREQUENCIES.map { it.first }.toTypedArray())
     private val stdlibCombo = ComboBox(STDLIB_LABELS)
-    private val packageManagerCombo = ComboBox(PyMcuSettings.PACKAGE_MANAGERS)
+    // Only what `pymcu new` can scaffold for; pipenv exists in Settings for
+    // syncing existing projects, but the driver cannot create one.
+    private val packageManagerCombo =
+        ComboBox(PyMcuDriverScaffold.SUPPORTED_PACKAGE_MANAGERS.toTypedArray())
 
     private val panel: JPanel = FormBuilder.createFormBuilder()
         .addLabeledComponent(JBLabel("Board:"), boardCombo, 1, false)
@@ -65,7 +68,9 @@ class PyMcuProjectGeneratorPeer : ProjectGeneratorPeer<PyMcuNewProjectSettings> 
         .panel
 
     init {
-        packageManagerCombo.selectedItem = PyMcuSettings.getInstance().packageManager
+        PyMcuSettings.getInstance().packageManager
+            .takeIf { it in PyMcuDriverScaffold.SUPPORTED_PACKAGE_MANAGERS }
+            ?.let { packageManagerCombo.selectedItem = it }
         populateBoards(catalog)
         boardCombo.addItemListener { if (it.stateChange == ItemEvent.SELECTED) onBoardChanged() }
         onBoardChanged()

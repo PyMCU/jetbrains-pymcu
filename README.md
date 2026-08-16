@@ -31,7 +31,8 @@ sources and the language subset comes from the driver, so the two never drift.
   computed from what is actually on disk. It doubles as the place to look when an import will not
   resolve.
 - **Status bar target indicator** that opens that dialog, a **serial-port picker** on flash, and a
-  **New Project wizard** that scaffolds a working blink for the board you pick.
+  **New Project wizard** that scaffolds through `pymcu new` — the same project the CLI would
+  create, toolchain and programmer included, so it builds and flashes without further edits.
 
 ## Requirements
 
