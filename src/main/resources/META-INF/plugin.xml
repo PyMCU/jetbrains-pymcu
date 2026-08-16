@@ -62,6 +62,18 @@
         <!-- Blink / UART / PWM / ADC / ISR starting points, mirroring the VS Code snippets -->
         <defaultLiveTemplates file="/liveTemplates/PyMCU.xml"/>
 
+        <!-- pyproject.toml problems the driver would reject, with the fix.
+             No `language` attribute: it must run on pyproject.toml whether or not
+             the TOML plugin is present to give the file a language. -->
+        <localInspection
+            language=""
+            shortName="PyMcuPyproject"
+            displayName="Invalid PyMCU project configuration"
+            groupName="PyMCU"
+            enabledByDefault="true"
+            level="ERROR"
+            implementationClass="dev.begeistert.pymcu.inspection.PyMcuPyprojectInspection"/>
+
         <!-- Experimental gates. Off for everyone; see PyMcuExperimental. -->
         <registryKey
             key="pymcu.debugger.enabled"

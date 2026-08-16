@@ -4,6 +4,28 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Library manager** in the tool window: browse the index, filter by target, install and remove.
+  The compatibility verdict is the driver's measured per-chip build result, with the reason shown
+  in the row — incompatible libraries stay visible and explain themselves rather than being hidden.
+- **`pyproject.toml` inspection** with quick fixes: the deprecated `chip` key (rename to `target`),
+  a `board`/`target` conflict (remove either side), a missing target and an unknown board. Fixes go
+  through the format-preserving writer, so comments and layout survive.
+- **Get Started checklist** in the tool window — CLI, target, dependencies, generated files, first
+  build, flash — each computed from what is on disk, each with the action that advances it. It is
+  the plugin's answer to the VS Code walkthrough, and doubles as a diagnostic for unresolved imports.
+- The tool window now has three tabs: Get Started, Libraries and Porting.
+- `./gradlew runIde -PrunIdeProject=<path>` opens a project instead of the welcome screen, so the
+  panels can actually be smoke-tested.
+
+### Changed
+- The plugin icon is the project's own snake-on-a-chip logo; the tool window icon is a monochrome
+  snake derived from it, as the platform requires at that size.
+
+### Requires
+- `pymcu libraries --json` and `pymcu search --json` for the library manager. Older CLIs degrade —
+  the panel reports the index is unavailable and every other feature keeps working.
+
 ## [0.1.0]
 
 First public release. The plugin was rebuilt around the current `pymcu` CLI surface.

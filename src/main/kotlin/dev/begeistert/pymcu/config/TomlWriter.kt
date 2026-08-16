@@ -66,6 +66,28 @@ object TomlWriter {
     private fun replaceRange(text: String, match: MatchResult, replacement: String): String =
         text.substring(0, match.range.first) + replacement + text.substring(match.range.last + 1)
 
+    /**
+     * Character range of `key` inside `[section]`, or null when either is absent.
+     * Used to anchor inspection highlights on the offending key rather than on
+     * the whole file.
+     */
+    fun keyRange(content: String, section: String, key: String): IntRange? {
+        val bounds = sectionBounds(content, section) ?: return null
+        val body = content.substring(bounds.first, bounds.second)
+        val match = Regex("""^[ \t]*(${Regex.escape(key)})[ \t]*=""", RegexOption.MULTILINE)
+            .find(body) ?: return null
+        val group = match.groups[1] ?: return null
+        val start = bounds.first + group.range.first
+        return start..(bounds.first + group.range.last)
+    }
+
+    /** Character range of the `[section]` header itself, or null when absent. */
+    fun sectionHeaderRange(content: String, section: String): IntRange? {
+        val match = Regex("""^\[[ \t]*${Regex.escape(section)}[ \t]*]""", RegexOption.MULTILINE)
+            .find(content) ?: return null
+        return match.range
+    }
+
     /** Quotes a string as a TOML basic string. */
     fun quote(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

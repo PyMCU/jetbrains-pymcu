@@ -32,59 +32,45 @@ list; the load-bearing changes:
 - Commands through the run/debug framework; no more unprompted `uv sync` on project open.
 - Verified compatible with PyCharm 2024.3, 2025.2 and 2026.1.
 
+Since then, the three remaining parity gaps — config validation, onboarding and the library
+manager — have closed; see 0.2.0 below.
+
 ---
 
 ## 0.2.0 — what a JetBrains user expects next
 
-Ordered by (value to a user trying to ship firmware) ÷ (effort).
+### Done since 0.1.0
 
-### 1. `pyproject.toml` inspection with quick fixes
-The VS Code extension validates the config and offers a `chip` → `target` migration. The plugin
-reads the same conditions already (`usesDeprecatedChipKey`, `hasConflictingTarget`, `hasNoTarget`)
-and `TomlWriter.renameKey` performs the fix — what is missing is the `LocalInspectionTool` that
-surfaces them on the file.
+- **`pyproject.toml` inspection** — the deprecated `chip` key, a `board`/`target` conflict, a
+  missing target and an unknown board, each with a quick fix. Implemented as a `LocalInspectionTool`
+  over raw text rather than TOML PSI: `checkFile` runs for any file type, so it behaves the same
+  whether or not `org.toml.lang` is present, and an optional dependency for three text ranges buys
+  nothing.
+- **Library manager** — index browsing, target filtering, install and remove, in a tool window tab.
+  ⇄ Needed `--json` on `libraries` and `search`; that landed in the driver alongside it.
+- **Guided onboarding** — a Get Started tab whose steps are computed from disk rather than narrated.
+  A tour tells the same story to someone who has already synced and someone who has not installed
+  the CLI; this does not, and it doubles as the answer to "why does `import board` not resolve".
 
-Needs a PSI to anchor on. `org.toml.lang` is bundled in PyCharm; depend on it optionally
-(`<depends optional="true" config-file="pymcu-toml.xml">`) so the plugin still loads without it.
+### Still open
 
-### 2. Library manager UI ⇄
-`pymcu libraries` / `search` / `install` / `uninstall` back an index with *measured* per-chip
-compatibility (`entry_verdict` refuses a library that cannot serve your target, with the reason).
-Neither IDE surfaces any of it. A tool-window tab listing installed libraries, with search and
-one-click install, is the clearest place where the JetBrains plugin can be better than the VS Code
-one rather than merely equal.
-
-⇄ Needs `--json` on `libraries`, `search` and `install` — today they print Rich tables.
-
-### 3. Flash-size and memory feedback
-`pymcu build` already computes the flash report (`_flash_report_lines`, `_parse_hex_flash_bytes`)
-and knows each chip's capacity. Parsing it out of the console and showing "1 248 / 32 768 B (3.8 %)"
-in the status bar after a build turns the number into something the user watches while working.
-
-⇄ Cleaner with a machine-readable line from the driver (`[BUILD_SIZE] flash=1248 total=32768`)
-rather than scraping the rendered table.
-
-### 4. Build progress from the compiler's phase tokens
-`pymcuc` emits `[PHASE_START]` / `[PHASE_END]` / `[BUILD_INFO]` tokens that the driver renders as a
-progress bar. In a run console those are noise. Consuming them into an IDE progress indicator —
-"Building atmega328p @ 16 MHz · lowering IR" — matches what the VS Code driver output already shows.
-
-### 5. Toolchain and backend management
-`pymcu toolchain list/install/update/clean` and `pymcu backend list/install/check` are pure
-install-state UI: a settings page with an install status per toolchain, a "reclaim tool cache"
-button showing what `toolchain clean --dry-run` would remove, and license status per backend.
-Nothing to invent, just surface it.
-
-### 6. Tool window availability
-`ToolWindowFactory.isApplicableAsync` is evaluated once at project open, so adding `[tool.pymcu]` to
-an already-open project leaves the window hidden until reopen. Register it dynamically from
-`PyMcuConfigListener` instead.
+- **Flash-size feedback.** `pymcu build` already computes the report and knows each chip's capacity.
+  Surfacing "1 248 / 32 768 B (3.8 %)" in the status bar turns the number into something you watch
+  while working. ⇄ Cleaner with a machine-readable `[BUILD_SIZE]` line than by scraping the table.
+- **Build progress from the compiler's phase tokens.** `pymcuc` emits `[PHASE_START]` /
+  `[PHASE_END]` / `[BUILD_INFO]`, which are noise in a run console and a progress bar in an IDE.
+- **Toolchain and backend management.** `pymcu toolchain list/install/update/clean` and
+  `pymcu backend list/install/check` are pure install-state UI, including what `toolchain clean
+  --dry-run` would reclaim.
+- **Tool window availability.** `isApplicableAsync` is evaluated once at project open, so adding
+  `[tool.pymcu]` to an open project leaves the window hidden until reopen. Register it dynamically
+  from `PyMcuConfigListener` instead.
 
 ---
 
 ## 0.3.0 — the things only an IDE can do
 
-### 7. Debugging ⇄ — gated behind `pymcu.debugger.enabled`
+### Debugging ⇄ — gated behind `pymcu.debugger.enabled`
 `pymcu build --debug` emits debug symbols and a line map "for the emulator debugger". If that
 emulator can speak a debug protocol, an `XDebuggerFramework` integration — breakpoints in Python
 source, stepping over generated assembly, watching registers and MMIO — is the single largest
@@ -97,17 +83,17 @@ slice merges to `main` behind a flag — reviewed and CI-covered — instead of 
 Every dev build therefore ships with debugging invisible and inert. The flag is removed, not
 defaulted on, when stepping works end to end on at least one AVR and one ARM target.
 
-### 8. Register and pin awareness
+### Register and pin awareness
 `pymcu.chips.<chip>` defines every register and bit for the selected target, and the compat layers
 carry per-board pin constants. Completion on `board.` that shows the physical pin, a gutter icon on
 `DDRB[DDB5] = 1` naming the port, and a hover that renders a register's bit layout would all read
 directly from what is installed. No new CLI surface — it is stdlib introspection.
 
-### 9. Profiling and benchmarking
+### Profiling and benchmarking
 `pymcu profile` and `pymcu bench` exist (hidden commands). A results view comparing builds over
 time — flash and SRAM per commit — fits a tool window well.
 
-### 10. Emulator run target
+### Emulator run target
 `avr8sharp` / `rp2040js` sit in the same ecosystem. A "Run in emulator" executor alongside Flash
 would close the loop for users without hardware on the desk.
 
@@ -132,6 +118,7 @@ Before tagging `v0.1.0`:
 - [ ] Generate a signing certificate and add the four secrets to the repository.
 - [ ] Create the plugin listing on the JetBrains Marketplace and obtain the publish token.
 - [ ] Run through the manual smoke path below on a machine with hardware attached.
+- [ ] Ship the driver's `libraries --json` / `search --json`, which the library manager needs.
 - [ ] Screenshots for the listing.
 - [ ] Decide the repository home — `PyMCU/jetbrains-pymcu`, matching `PyMCU/vscode-pymcu`.
 
@@ -145,4 +132,9 @@ Manual smoke path (nothing here is covered by automated tests):
    bar changes to `raspberry_pi_pico (ARM)`, and a sync regenerates the board module.
 4. Build with an intentional type error. The console link opens the right line.
 5. Flash with two boards connected. The port picker appears and lists both.
-6. Open a project whose `[tool.pymcu]` uses the deprecated `chip` key. It is still recognised.
+6. Open a project whose `[tool.pymcu]` uses the deprecated `chip` key. It is still recognised, the
+   inspection flags it, and the quick fix migrates it without touching the surrounding comments.
+7. Libraries tab: install one, watch the row flip to Installed; pick one the index says will not fit
+   this chip and confirm the reason is shown before you can install it.
+8. Get Started tab on a freshly cloned project: every step reflects reality, and each action moves
+   the one below it to green.

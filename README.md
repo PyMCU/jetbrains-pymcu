@@ -20,6 +20,15 @@ sources and the language subset comes from the driver, so the two never drift.
 - **Project configuration dialog** — board, clock, compat stdlib, programmer, serial port and AVR
   fuses, written back to `[tool.pymcu]` without disturbing your comments or formatting. The board
   list comes from `pymcu boards --json`, so it matches whatever backends you have installed.
+- **Library manager** — browse, install and remove PyMCU libraries in the tool window. The index
+  records whether each library actually *built* for each chip, so an incompatible one says why
+  instead of failing at build time.
+- **`pyproject.toml` inspection** — the deprecated `chip` key, a `board`/`target` conflict, a
+  missing target and an unknown board are flagged in the editor, each with the fix. Edits preserve
+  your comments and formatting.
+- **Get Started checklist** — the path from empty project to flashed board, with every step
+  computed from what is actually on disk. It doubles as the place to look when an import will not
+  resolve.
 - **Status bar target indicator** that opens that dialog, a **serial-port picker** on flash, and a
   **New Project wizard** that scaffolds a working blink for the board you pick.
 
@@ -43,6 +52,9 @@ All under **Tools | PyMCU**, and on the PyMCU tool window's toolbar.
 | Sync Project | dependency install, then `pymcu sync` and `pymcu stubs` |
 | Regenerate IDE Stubs | `pymcu stubs` alone |
 | Configure Project… | the board / flash configuration dialog |
+
+The tool window has three tabs: **Get Started** (setup checklist), **Libraries** (install and
+remove) and **Porting** (assistant findings).
 
 ## Settings
 
@@ -97,6 +109,18 @@ Work that is merged but not ready is off behind a registry key. To try one:
 
 Requires JDK 21. The Gradle daemon's JDK is pinned in `gradle.properties`; change
 `org.gradle.java.home` if yours lives elsewhere.
+
+## Requirements on the CLI
+
+Some features need a `pymcu` new enough to answer in JSON. Older CLIs degrade rather than break —
+the affected panel says so and the rest keeps working.
+
+| Feature | Needs |
+|---|---|
+| Board catalog | `pymcu boards --json` |
+| Porting assistant | `pymcu lint --json` |
+| Typed completions | `pymcu stubs` |
+| Library manager | `pymcu libraries --json`, `pymcu search --json` |
 
 ## Relationship to the VS Code extension
 

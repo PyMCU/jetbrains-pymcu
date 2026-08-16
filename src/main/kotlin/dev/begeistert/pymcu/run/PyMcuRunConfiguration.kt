@@ -27,7 +27,14 @@ import java.nio.charset.StandardCharsets
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-/** The `pymcu` sub-commands worth a run configuration. */
+/**
+ * The `pymcu` sub-commands offered in the editor's dropdown.
+ *
+ * Not exhaustive: the combo is editable, and the tool window runs `install` and
+ * `uninstall` through temporary configurations. Those take a library name, so a
+ * saved configuration for them is rarely what anyone wants — but one that is
+ * saved still round-trips.
+ */
 val PYMCU_COMMANDS: List<String> = listOf("build", "flash", "clean", "sync", "stubs")
 
 /**

@@ -100,4 +100,12 @@ tasks {
     test {
         useJUnit()
     }
+
+    // Open a project straight away instead of landing on the welcome screen:
+    //   ./gradlew runIde -PrunIdeProject=/path/to/a/pymcu/project
+    // The tool window panels only exist once a project is open, so this is the
+    // difference between smoke-testing the plugin and smoke-testing the IDE.
+    runIde {
+        providers.gradleProperty("runIdeProject").orNull?.let { args(it) }
+    }
 }

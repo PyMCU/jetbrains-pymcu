@@ -5,9 +5,20 @@ import com.intellij.execution.ExecutionManager
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.project.Project
+import com.intellij.util.messages.Topic
 import dev.begeistert.pymcu.actions.PyMcuSyncTask
 import dev.begeistert.pymcu.notifications.PyMcuNotifications
 import dev.begeistert.pymcu.resolver.PyMcuLibraryRootsRefresher
+
+/** Fired after `pymcu install` / `uninstall` finishes, however it finished. */
+fun interface PyMcuLibraryChangeListener {
+    fun librariesChanged()
+
+    companion object {
+        val TOPIC: Topic<PyMcuLibraryChangeListener> =
+            Topic.create("PyMCU libraries changed", PyMcuLibraryChangeListener::class.java)
+    }
+}
 
 /**
  * Turns the end of a PyMCU run into the obvious next step.
@@ -34,6 +45,13 @@ class PyMcuExecutionListener(private val project: Project) : ExecutionListener {
                     project, "PyMCU flash failed",
                     "Exit code $exitCode. The console output says which step failed."
                 )
+            }
+
+            "install", "uninstall" -> {
+                // Announce on failure too: a rejected install still rolled back,
+                // and the panel's "installed" column has to reflect that.
+                if (exitCode == 0) PyMcuLibraryRootsRefresher.refresh(project)
+                project.messageBus.syncPublisher(PyMcuLibraryChangeListener.TOPIC).librariesChanged()
             }
         }
     }

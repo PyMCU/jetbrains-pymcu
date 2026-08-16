@@ -51,17 +51,29 @@ import javax.swing.tree.TreeSelectionModel
 class PyMcuToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = PyMcuToolWindowPanel(project)
-        Disposer.register(toolWindow.disposable, panel)
-        val content = ContentFactory.getInstance().createContent(panel, "", false)
-        toolWindow.contentManager.addContent(content)
+        val factory = ContentFactory.getInstance()
+
+        // Ordered by when you need them: set the project up, add what it needs,
+        // then work through what the porting assistant found.
+        val tabs = listOf<Pair<String, JPanel>>(
+            "Get Started" to PyMcuSetupPanel(project),
+            "Libraries" to PyMcuLibrariesPanel(project),
+            "Porting" to PyMcuToolWindowPanel(project),
+        )
+
+        for ((title, panel) in tabs) {
+            if (panel is Disposable) Disposer.register(toolWindow.disposable, panel)
+            toolWindow.contentManager.addContent(
+                factory.createContent(panel, title, false).apply { isCloseable = false }
+            )
+        }
     }
 
     override suspend fun isApplicableAsync(project: Project): Boolean =
         PyMcuProjectService.getInstance(project).isPyMcuProject
 }
 
-private class PyMcuToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+internal class PyMcuToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val targetLabel = JBLabel()
     private val findingsRoot = DefaultMutableTreeNode("PyMCU")
