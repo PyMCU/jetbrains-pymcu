@@ -21,6 +21,7 @@ import dev.begeistert.pymcu.cli.SerialPorts
 import dev.begeistert.pymcu.config.PyMcuConfig
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.config.TomlWriter
+import dev.begeistert.pymcu.newproject.PyMcuTargets
 import dev.begeistert.pymcu.notifications.PyMcuNotifications
 import dev.begeistert.pymcu.project.PyMcuProjectService
 import java.awt.BorderLayout
@@ -44,6 +45,7 @@ class PyMcuConfigureDialog private constructor(
 
     companion object {
         private const val BARE_CHIP = "— Bare chip (advanced) —"
+        private const val AUTO_PROGRAMMER = "Auto (from chip)"
 
         /** Fetches the board catalog off the EDT, then opens the dialog. */
         fun show(project: Project) {
@@ -70,11 +72,20 @@ class PyMcuConfigureDialog private constructor(
 
     // ── model ────────────────────────────────────────────────────────────────
 
-    /** Board entries as "name (chip)", grouped by the catalog's own grouping. */
+    /**
+     * Board entries, from the same helper the New Project wizard uses.
+     *
+     * It was built from `groupedBoards()`, which only emits boards named in the
+     * catalog's `groups` — so `pico`, `rp2040`, `pico2` and `rp2350` were
+     * unreachable here, and any future board the driver adds without a group
+     * entry would be too.
+     */
     private val boardEntries: List<Pair<String, String?>> = buildList {
         add(BARE_CHIP to null)
-        for ((group, boards) in catalog.groupedBoards()) {
-            for (board in boards) add("${board.name}  ·  ${board.chip}  ($group)" to board.name)
+        for (choice in PyMcuTargets.choices(catalog)) {
+            val board = choice.board ?: continue
+            val heading = choice.heading?.let { " ($it)" }.orEmpty()
+            add("$board  ·  ${choice.chip}$heading" to board)
         }
     }
 
@@ -85,7 +96,11 @@ class PyMcuConfigureDialog private constructor(
     ).apply { isEditable = true }
     private val frequencyField = JBTextField()
     private val stdlibCombo = ComboBox(arrayOf("None (native pymcu.hal)", "MicroPython compat", "CircuitPython compat"))
-    private val programmerCombo = ComboBox(arrayOf("Auto (from chip)", "avrdude", "rp2040", "pk2cmd", "wlink"))
+    // The names `get_programmer` resolves. "wlink" was wrong: the driver's
+    // default_programmer returns "wch-link", and anything else is rejected at
+    // flash time with "Unknown programmer".
+    private val programmerCombo =
+        ComboBox(arrayOf(AUTO_PROGRAMMER, "avrdude", "rp2040", "pk2cmd", "wch-link"))
     private val portField = JBTextField()
     private val baudField = JBTextField()
     private val fuseLowField = JBTextField()
@@ -111,7 +126,7 @@ class PyMcuConfigureDialog private constructor(
         config.explicitChip?.let { chipCombo.selectedItem = it }
         frequencyField.text = (config.frequency ?: 16_000_000L).toString()
         stdlibCombo.selectedIndex = stdlibValues.indexOf(config.flavor ?: "").coerceAtLeast(0)
-        programmerCombo.selectedItem = config.flash.programmer ?: "Auto (from chip)"
+        programmerCombo.selectedItem = config.flash.programmer ?: AUTO_PROGRAMMER
         portField.text = config.flash.port.orEmpty()
         baudField.text = (config.flash.baud ?: 115200).toString()
         fuseLowField.text = config.flash.fuseLow.orEmpty()
@@ -241,7 +256,7 @@ class PyMcuConfigureDialog private constructor(
             TomlWriter.setKey(content, section, "stdlib", "[${TomlWriter.quote(stdlib)}]")
 
         val programmer = programmerCombo.selectedItem as? String
-        content = if (programmer == null || programmer.startsWith("Auto"))
+        content = if (programmer == null || programmer == AUTO_PROGRAMMER)
             TomlWriter.removeKey(content, flashSection, "programmer")
         else
             TomlWriter.setKey(content, flashSection, "programmer", TomlWriter.quote(programmer))

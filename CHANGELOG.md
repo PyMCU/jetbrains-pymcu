@@ -4,7 +4,35 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Added
+- **The New Project wizard was redesigned.** Board picker with the catalog's own
+  group headings and speed search instead of a flat 40-entry list; a line under
+  the chip saying what it actually is (`AVR · avr toolchain · flashed with
+  avrdude`); the Python API promoted from the fourth combo to a titled radio
+  group whose options are labelled with the import each one produces; an
+  editable, per-architecture clock; and a footer naming the files that will be
+  created. Built with the Kotlin UI DSL rather than `FormBuilder`.
+- **Go To Declaration on the HAL lands on the architecture the project builds
+  for.** `pymcu/hal/gpio.py` dispatches on `__CHIP__` across six branches, and
+  nine facades do the same, so `Pin` resolved to every architecture at once. A
+  `PyResolveResultRater` now prefers the live one, reading the architecture from
+  the chip's own `device_info(...)` line rather than guessing it from the name.
+  Conservative by design: anything it does not recognise rates neutral, and it
+  does not filter within the PIC family, where the facades share code unevenly.
+
 ### Fixed
+- **The wizard's clock defaults disagreed with the driver**, and because it
+  always passes `--freq`, the wrong value went straight into the project. A bare
+  ATmega was offered 16 MHz where the driver says 8; the Digispark and Trinket 8
+  where they ship a 16.5 MHz crystal; PIC 16 where it is 4; RISC-V 16 where it
+  is 48 or 144.
+- The configuration dialog offered a programmer called `wlink`. The driver
+  resolves `wch-link`, and anything else is refused at flash time.
+- The configuration dialog and the wizard both hid boards the catalog lists
+  without a group — `pico`, `rp2040`, `pico2`, `rp2350`, and any future board
+  the driver adds before grouping it.
+
+### Fixed (earlier)
 - **The New Project wizard now scaffolds with `pymcu new` instead of a template
   of its own.** The hand-written one omitted `[tool.pymcu.toolchain]` and
   `[tool.pymcu.flash]`, so generated projects had no programmer to flash with;
