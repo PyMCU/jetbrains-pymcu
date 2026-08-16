@@ -1,79 +1,116 @@
 package dev.begeistert.pymcu.resolver
 
 import com.intellij.navigation.ItemPresentation
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.AdditionalLibraryRootsProvider
 import com.intellij.openapi.roots.SyntheticLibrary
+import com.intellij.openapi.roots.ex.ProjectRootManagerEx
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import dev.begeistert.pymcu.config.PyMcuConfigReader
-import dev.begeistert.pymcu.stdlib.PyMcuStubInstaller
+import dev.begeistert.pymcu.PyMcuIcons
+import dev.begeistert.pymcu.project.PyMcuProjectService
+import dev.begeistert.pymcu.venv.PyMcuVenv
 import java.nio.file.Path
 import javax.swing.Icon
 
 /**
- * Adds compat package directories to PyCharm's module resolution path for
- * PyMCU projects that use CircuitPython or MicroPython stdlib compat layers.
+ * Teaches PyCharm the same import roots the compiler uses, so `import machine`,
+ * `import digitalio` and `import board` resolve to real files.
  *
- * The pymcu compiler resolves:
- *   import digitalio  →  pymcu_circuitpython/digitalio.py
- *   import machine    →  pymcu_micropython/machine.py
- *   import board      →  dist/_generated/board.py
+ * The compiler resolves, in order:
+ *   `import board`     → `dist/_generated/board.py`   (written by `pymcu sync`)
+ *   `import digitalio` → `site-packages/pymcu_circuitpython/digitalio.py`
+ *   `import machine`   → `site-packages/pymcu_micropython/machine.py`
  *
- * By adding the compat package directory as an extra library root, PyCharm
- * finds the same files the compiler does — no shim files needed.
- *
- * Registered via <additionalLibraryRootsProvider> in plugin.xml.
+ * Adding those directories as library roots mirrors the compiler exactly. The
+ * `.pyi` tree from `pymcu stubs` is added first so typed signatures win over the
+ * untyped implementation when both are present.
  */
 class PyMcuAdditionalLibraryRootsProvider : AdditionalLibraryRootsProvider() {
 
     private val log = Logger.getInstance(PyMcuAdditionalLibraryRootsProvider::class.java)
 
     override fun getAdditionalProjectLibraries(project: Project): Collection<SyntheticLibrary> {
-        val config   = PyMcuConfigReader.findConfig(project) ?: return emptyList()
-        if (config.stdlib.isEmpty()) return emptyList()
-
-        val basePath = project.basePath ?: return emptyList()
-        val sp       = PyMcuStubInstaller.findSitePackages(basePath)
-        val lfs      = LocalFileSystem.getInstance()
-        val roots    = mutableListOf<VirtualFile>()
-
-        if ("circuitpython" in config.stdlib && sp != null) {
-            lfs.findFileByNioFile(sp.resolve("pymcu_circuitpython"))
-                ?.also { log.debug("PyMCU: adding library root ${it.path}") }
-                ?.let  { roots.add(it) }
-        }
-
-        if ("micropython" in config.stdlib && sp != null) {
-            lfs.findFileByNioFile(sp.resolve("pymcu_micropython"))
-                ?.also { log.debug("PyMCU: adding library root ${it.path}") }
-                ?.let  { roots.add(it) }
-        }
-
-        // dist/_generated/ contains board.py (written by the build or proactively by startup)
-        lfs.findFileByNioFile(Path.of(basePath, "dist", "_generated"))
-            ?.also { log.debug("PyMCU: adding generated root ${it.path}") }
-            ?.let  { roots.add(it) }
-
+        val roots = collectRoots(project)
         if (roots.isEmpty()) return emptyList()
         return listOf(PyMcuCompatLibrary(roots))
     }
 
-    override fun getRootsToWatch(project: Project): Collection<VirtualFile> {
-        val config   = PyMcuConfigReader.findConfig(project) ?: return emptyList()
+    override fun getRootsToWatch(project: Project): Collection<VirtualFile> = collectRoots(project)
+
+    private fun collectRoots(project: Project): List<VirtualFile> {
+        val config = PyMcuProjectService.config(project) ?: return emptyList()
         val basePath = project.basePath ?: return emptyList()
-        val sp       = PyMcuStubInstaller.findSitePackages(basePath) ?: return emptyList()
-        val lfs      = LocalFileSystem.getInstance()
+        val lfs = LocalFileSystem.getInstance()
+        val roots = LinkedHashSet<VirtualFile>()
 
-        return buildList {
-            if ("circuitpython" in config.stdlib)
-                lfs.findFileByNioFile(sp.resolve("pymcu_circuitpython"))?.let { add(it) }
-            if ("micropython" in config.stdlib)
-                lfs.findFileByNioFile(sp.resolve("pymcu_micropython"))?.let { add(it) }
+        // NOTE: findFileByNioFile, not refreshAndFindFileByNioFile. This runs
+        // under a read action, and refreshing takes a VFS write lock — the
+        // deadlock that used to hang project open. Whoever writes these files
+        // refreshes the VFS itself (see PyMcuLibraryRootsRefresher).
+        fun add(path: Path) {
+            lfs.findFileByNioFile(path)?.let { if (it.isDirectory) roots.add(it) }
         }
-    }
 
+        val stubsRoot = Path.of(basePath, "dist", "_generated", "stubs")
+        add(stubsRoot)                                  // `import pymcu.hal.gpio`
+        for (flavor in config.stdlib) {
+            add(stubsRoot.resolve("pymcu_$flavor"))     // bare `import machine`
+        }
+
+        // `import board` — generated by `pymcu sync` / the build.
+        add(Path.of(basePath, "dist", "_generated"))
+
+        // The real sources: go-to-definition lands on code, not just a stub.
+        val sitePackages = PyMcuVenv.sitePackages(basePath)
+        if (sitePackages != null) {
+            for (flavor in config.stdlib) add(sitePackages.resolve("pymcu_$flavor"))
+        }
+
+        log.debug("PyMCU: ${roots.size} additional library root(s) for ${project.name}")
+        return roots.toList()
+    }
+}
+
+/**
+ * Re-evaluates the roots above after files are written on disk.
+ *
+ * Two steps are needed, and the order matters. The provider runs under a read
+ * action and therefore cannot refresh the VFS itself, so step 1 populates the
+ * VFS from a background thread; step 2 fires the roots-changed event that makes
+ * the platform call the provider again, this time finding the files.
+ */
+object PyMcuLibraryRootsRefresher {
+
+    fun refresh(project: Project) {
+        if (project.isDisposed) return
+        val basePath = project.basePath ?: return
+        val lfs = LocalFileSystem.getInstance()
+
+        // Step 1 — populate the VFS (safe off the EDT, outside a read action).
+        lfs.refreshAndFindFileByPath("$basePath/dist/_generated")
+        lfs.refreshAndFindFileByPath("$basePath/dist/_generated/stubs")
+        PyMcuVenv.sitePackages(basePath)?.let { lfs.refreshAndFindFileByNioFile(it) }
+
+        // Step 2 — invalidate the cached roots on the EDT under a write action.
+        // The (Runnable, Boolean, Boolean) overload is marked deprecated in favour
+        // of one taking RootsChangeRescanningInfo, but that class is not exported
+        // to the plugin classpath in PyCharm Community; this overload is present
+        // in every supported build.
+        ApplicationManager.getApplication().invokeLater({
+            if (project.isDisposed) return@invokeLater
+            ApplicationManager.getApplication().runWriteAction {
+                @Suppress("DEPRECATION")
+                ProjectRootManagerEx.getInstanceEx(project).makeRootsChange(
+                    Runnable { },
+                    /* fileTypes = */ false,
+                    /* fireEvents = */ true,
+                )
+            }
+        }, project.disposed)
+    }
 }
 
 private class PyMcuCompatLibrary(private val roots: List<VirtualFile>) :
@@ -82,10 +119,10 @@ private class PyMcuCompatLibrary(private val roots: List<VirtualFile>) :
     override fun getSourceRoots(): Collection<VirtualFile> = roots
 
     override fun getPresentableText(): String = "PyMCU Compat"
-    override fun getIcon(unused: Boolean): Icon? = null
 
-    override fun equals(other: Any?): Boolean =
-        other is PyMcuCompatLibrary && roots == other.roots
+    override fun getIcon(unused: Boolean): Icon = PyMcuIcons.PyMcu
+
+    override fun equals(other: Any?): Boolean = other is PyMcuCompatLibrary && roots == other.roots
 
     override fun hashCode(): Int = roots.hashCode()
 }

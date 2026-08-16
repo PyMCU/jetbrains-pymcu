@@ -1,77 +1,132 @@
 <idea-plugin>
     <id>dev.begeistert.pymcu</id>
     <name>PyMCU</name>
-    <version>0.0.1</version>
-    <vendor email="begeistert@gmail.com" url="https://github.com/begeistert/pymcu">begeistert</vendor>
-
-    <description><![CDATA[
-        PyMCU support for PyCharm: run configurations, error highlighting, tool window,
-        status bar chip indicator, and automatic project sync for pymcu projects.
-    ]]></description>
+    <vendor email="begeistert@gmail.com" url="https://github.com/PyMCU/PyMCU">PyMCU</vendor>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.python</depends>
 
     <extensions defaultExtensionNs="com.intellij">
 
-        <!-- Application-level settings service -->
-        <applicationService
-            serviceImplementation="dev.begeistert.pymcu.settings.PyMcuSettings"/>
+        <!-- Settings -->
+        <applicationService serviceImplementation="dev.begeistert.pymcu.settings.PyMcuSettings"/>
+        <applicationConfigurable
+            parentId="tools"
+            id="dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable"
+            instance="dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable"
+            displayName="PyMCU"/>
 
-        <!-- Notification group used by PyMcuStartupActivity -->
+        <!-- Project-scoped services -->
+        <projectService serviceImplementation="dev.begeistert.pymcu.project.PyMcuProjectService"/>
+        <projectService serviceImplementation="dev.begeistert.pymcu.cli.PyMcuBoardCatalogService"/>
+        <projectService serviceImplementation="dev.begeistert.pymcu.lint.PyMcuLintResults"/>
+
         <notificationGroup id="PyMCU" displayType="BALLOON" isLogByDefault="true"/>
 
+        <postStartupActivity implementation="dev.begeistert.pymcu.startup.PyMcuStartupActivity"/>
 
-        <!-- Status bar widget factory -->
+        <!-- Target indicator; clicking it opens the configuration dialog -->
         <statusBarWidgetFactory
             id="PyMcuStatusBarWidget"
             implementation="dev.begeistert.pymcu.statusbar.PyMcuStatusBarWidgetFactory"
             order="last"/>
 
-        <!-- Tool window -->
         <toolWindow
             id="PyMCU"
             anchor="bottom"
             factoryClass="dev.begeistert.pymcu.toolwindow.PyMcuToolWindowFactory"
-            icon="/icons/pymcu.svg"/>
+            icon="dev.begeistert.pymcu.PyMcuIcons.PyMcu"/>
 
-        <!-- Run configuration type -->
-        <configurationType
-            implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationType"/>
+        <!-- Run configurations: build / flash / clean / sync / stubs -->
+        <configurationType implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationType"/>
+        <runConfigurationProducer
+            implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationProducer"
+            order="last"/>
 
-        <!-- Console filter provider for compiler diagnostics -->
-        <consoleFilterProvider
-            implementation="dev.begeistert.pymcu.console.PyMcuConsoleFilterProvider"/>
+        <!-- Clickable file:line:col diagnostics from pymcuc -->
+        <consoleFilterProvider implementation="dev.begeistert.pymcu.console.PyMcuConsoleFilterProvider"/>
 
-        <!-- Settings configurable under Tools -->
-        <applicationConfigurable
-            parentId="tools"
-            instance="dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable"
-            id="dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable"
-            displayName="PyMCU"/>
+        <!-- Porting assistant: `pymcu lint` findings as editor annotations -->
+        <externalAnnotator
+            language="Python"
+            implementationClass="dev.begeistert.pymcu.lint.PyMcuLintAnnotator"/>
 
         <!-- New Project wizard entry -->
         <directoryProjectGenerator
             implementation="dev.begeistert.pymcu.newproject.PyMcuProjectGenerator"/>
 
-        <!-- Extra library roots: pymcu_circuitpython/ and pymcu_micropython/ dirs
-             so PyCharm resolves 'import digitalio', 'import machine', 'import board' -->
+        <!-- Resolve `import machine` / `digitalio` / `board` the way the compiler does -->
         <additionalLibraryRootsProvider
             implementation="dev.begeistert.pymcu.resolver.PyMcuAdditionalLibraryRootsProvider"/>
 
+        <!-- Blink / UART / PWM / ADC / ISR starting points, mirroring the VS Code snippets -->
+        <defaultLiveTemplates file="/liveTemplates/PyMCU.xml"/>
+
+        <!-- Experimental gates. Off for everyone; see PyMcuExperimental. -->
+        <registryKey
+            key="pymcu.debugger.enabled"
+            defaultValue="false"
+            restartRequired="true"
+            description="PyMCU: enable the in-development emulator debugger. Not implemented yet — turning this on currently changes nothing."/>
+
     </extensions>
 
-    <extensions defaultExtensionNs="com.intellij">
-        <runConfigurationProducer
-            implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationProducer"
-            order="last"/>
-    </extensions>
+    <actions>
+        <action id="PyMcu.Build"
+                class="dev.begeistert.pymcu.actions.PyMcuBuildAction"
+                text="Build" description="Compile the project (pymcu build)">
+            <keyboard-shortcut keymap="$default" first-keystroke="control shift B"/>
+        </action>
+        <action id="PyMcu.Flash"
+                class="dev.begeistert.pymcu.actions.PyMcuFlashAction"
+                text="Flash" description="Write the firmware to the board (pymcu flash)"/>
+        <action id="PyMcu.Clean"
+                class="dev.begeistert.pymcu.actions.PyMcuCleanAction"
+                text="Clean" description="Remove build artifacts (pymcu clean)"/>
+        <action id="PyMcu.BuildExplain"
+                class="dev.begeistert.pymcu.actions.PyMcuBuildExplainAction"
+                text="Build and Explain" description="Compile and report the setup injected implicitly"/>
+        <action id="PyMcu.Sync"
+                class="dev.begeistert.pymcu.actions.PyMcuSyncAction"
+                text="Sync Project" description="Install dependencies and regenerate IDE support files"/>
+        <action id="PyMcu.Lint"
+                class="dev.begeistert.pymcu.actions.PyMcuLintProjectAction"
+                text="Lint Project (Porting Assistant)"
+                description="Flag MicroPython / CircuitPython idioms that need a rewrite"/>
+        <action id="PyMcu.Configure"
+                class="dev.begeistert.pymcu.actions.PyMcuConfigureAction"
+                text="Configure Project..."
+                description="Board, clock, compat stdlib, programmer, port and fuses"/>
+        <action id="PyMcu.RegenerateStubs"
+                class="dev.begeistert.pymcu.actions.PyMcuRegenerateStubsAction"
+                text="Regenerate IDE Stubs"
+                description="Run pymcu stubs and re-index the generated .pyi tree"/>
 
-    <!-- Project-open hook: fires reliably in PyCharm Community 2024.3 -->
-    <applicationListeners>
-        <listener
-            class="dev.begeistert.pymcu.startup.PyMcuStartupActivity"
-            topic="com.intellij.openapi.project.ProjectManagerListener"/>
-    </applicationListeners>
+        <!-- Tools | PyMCU -->
+        <group id="PyMcu.ToolsMenu" text="PyMCU" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <reference ref="PyMcu.Build"/>
+            <reference ref="PyMcu.Flash"/>
+            <reference ref="PyMcu.Clean"/>
+            <separator/>
+            <reference ref="PyMcu.BuildExplain"/>
+            <reference ref="PyMcu.Lint"/>
+            <separator/>
+            <reference ref="PyMcu.Sync"/>
+            <reference ref="PyMcu.RegenerateStubs"/>
+            <reference ref="PyMcu.Configure"/>
+        </group>
+
+        <!-- Vertical toolbar inside the PyMCU tool window -->
+        <group id="PyMcu.ToolWindowToolbar">
+            <reference ref="PyMcu.Build"/>
+            <reference ref="PyMcu.Flash"/>
+            <reference ref="PyMcu.Clean"/>
+            <separator/>
+            <reference ref="PyMcu.Lint"/>
+            <reference ref="PyMcu.Sync"/>
+            <reference ref="PyMcu.Configure"/>
+        </group>
+    </actions>
 
 </idea-plugin>

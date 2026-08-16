@@ -1,50 +1,41 @@
 package dev.begeistert.pymcu.statusbar
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.newvfs.BulkFileListener
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.util.Consumer
-import dev.begeistert.pymcu.config.PyMcuConfigReader
-import dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable
+import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
+import dev.begeistert.pymcu.config.PyMcuConfig
+import dev.begeistert.pymcu.configure.PyMcuConfigureDialog
+import dev.begeistert.pymcu.project.PyMcuConfigListener
+import dev.begeistert.pymcu.project.PyMcuProjectService
 import java.awt.event.MouseEvent
 
 private const val WIDGET_ID = "PyMcuStatusBarWidget"
 
-// ---------------------------------------------------------------------------
-// Widget
-// ---------------------------------------------------------------------------
-
 /**
- * Status bar widget that shows the target chip name (e.g., "⚙ atmega328p").
- * Clicking the widget opens Settings > Tools > PyMCU.
+ * Shows the target the project builds for, e.g. "⚙ arduino_uno (AVR)".
+ * Clicking it opens the project configuration dialog — the same one-click path
+ * to "change my board" the VS Code status bar item offers.
  */
 class PyMcuStatusBarWidget(private val project: Project) :
     StatusBarWidget, StatusBarWidget.TextPresentation {
 
     private var statusBar: StatusBar? = null
-    private var chipText: String = buildChipText()
+
+    @Volatile
+    private var text: String = ""
 
     init {
-        // Listen for pyproject.toml changes and refresh the displayed chip name
-        project.messageBus.connect().subscribe(
-            VirtualFileManager.VFS_CHANGES,
-            object : BulkFileListener {
-                override fun after(events: List<VFileEvent>) {
-                    if (events.any { it.file?.name == "pyproject.toml" }) {
-                        chipText = buildChipText()
-                        ApplicationManager.getApplication().invokeLater {
-                            statusBar?.updateWidget(ID())
-                        }
-                    }
-                }
-            }
-        )
+        // Connecting to `this` ties the subscription to the widget's lifetime;
+        // the previous unparented connect() leaked a listener per project open.
+        project.messageBus.connect(this).subscribe(PyMcuConfigListener.TOPIC, PyMcuConfigListener {
+            refresh()
+        })
+        refresh()
     }
 
     override fun ID(): String = WIDGET_ID
@@ -59,60 +50,67 @@ class PyMcuStatusBarWidget(private val project: Project) :
         statusBar = null
     }
 
-    // TextPresentation ---------------------------------------------------------
+    // ── presentation ─────────────────────────────────────────────────────────
 
-    override fun getText(): String = chipText
+    override fun getText(): String = text
 
-    override fun getAlignment(): Float = 0.5f  // center
+    override fun getAlignment(): Float = 0.5f
 
     override fun getTooltipText(): String {
-        val config = PyMcuConfigReader.findConfig(project) ?: return "No PyMCU project detected"
-        val sb = StringBuilder("PyMCU: ${config.displayName}")
-        if (config.frequency != null) sb.append(" @ ${config.frequency} Hz")
-        if (config.stdlib.isNotEmpty()) sb.append(" · ${config.stdlib.joinToString(", ")}")
-        if (config.hasFfi) sb.append(" · C/C++ FFI")
-        return sb.toString()
+        val config = PyMcuProjectService.config(project) ?: return "No PyMCU project detected"
+        val chip = resolveChip(config)
+        return buildString {
+            append("PyMCU target: ")
+            append(config.board?.let { board -> chip?.let { "$board ($it)" } ?: board } ?: chip ?: "not set")
+            config.frequency?.let { append(" @ $it Hz") }
+            config.flavor?.let { append(" · $it compat") }
+            config.flash.port?.let { append(" · port $it") }
+            if (config.hasFfi) append(" · C/C++ FFI")
+            append(" — click to configure")
+        }
     }
 
     override fun getClickConsumer(): Consumer<MouseEvent> = Consumer {
-        ShowSettingsUtil.getInstance().showSettingsDialog(
-            project,
-            PyMcuSettingsConfigurable::class.java
-        )
+        PyMcuConfigureDialog.show(project)
     }
 
-    // Helpers ------------------------------------------------------------------
+    // ── state ────────────────────────────────────────────────────────────────
 
-    private fun buildChipText(): String {
-        val config = PyMcuConfigReader.findConfig(project) ?: return ""
-        return "\u2699 ${config.displayName}"
+    private fun refresh() {
+        val config = PyMcuProjectService.config(project)
+        text = config?.let(::describe).orEmpty()
+        ApplicationManager.getApplication().invokeLater {
+            if (!project.isDisposed) statusBar?.updateWidget(WIDGET_ID)
+        }
     }
+
+    private fun describe(config: PyMcuConfig): String {
+        val chip = resolveChip(config)
+        val label = config.board ?: chip ?: "no target"
+        val architecture = config.architecture(chip)
+        return if (architecture != null) "⚙ $label ($architecture)" else "⚙ $label"
+    }
+
+    /** Board aliases need the catalog; use whatever is cached rather than blocking the EDT. */
+    private fun resolveChip(config: PyMcuConfig): String? =
+        config.explicitChip
+            ?: config.board?.let { PyMcuBoardCatalogService.getInstance(project).cachedOrFallback().chipOf(it) }
 }
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/**
- * Registers [PyMcuStatusBarWidget] with the IDE status bar.
- * The widget is only shown when a pymcu project is detected.
- */
-@Suppress("UnstableApiUsage")
 class PyMcuStatusBarWidgetFactory : StatusBarWidgetFactory {
 
     override fun getId(): String = WIDGET_ID
 
-    override fun getDisplayName(): String = "PyMCU Chip"
+    override fun getDisplayName(): String = "PyMCU Target"
 
     override fun isAvailable(project: Project): Boolean =
-        PyMcuConfigReader.findConfig(project) != null
+        PyMcuProjectService.getInstance(project).isPyMcuProject
 
-    override fun createWidget(project: Project): StatusBarWidget =
-        PyMcuStatusBarWidget(project)
+    override fun createWidget(project: Project): StatusBarWidget = PyMcuStatusBarWidget(project)
 
-    override fun disposeWidget(widget: StatusBarWidget) {
-        widget.dispose()
-    }
+    /** Disposer.dispose, not widget.dispose(): the widget's message-bus
+     *  connection is registered as its child and only that path releases it. */
+    override fun disposeWidget(widget: StatusBarWidget) = Disposer.dispose(widget)
 
     override fun canBeEnabledOn(statusBar: StatusBar): Boolean = true
 }

@@ -1,193 +1,233 @@
 package dev.begeistert.pymcu.toolwindow
 
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.newvfs.BulkFileListener
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.DoubleClickListener
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.content.ContentFactory
-import dev.begeistert.pymcu.config.PyMcuConfigReader
-import dev.begeistert.pymcu.settings.PyMcuSettings
+import com.intellij.ui.treeStructure.Tree
+import com.intellij.util.ui.JBUI
+import dev.begeistert.pymcu.PyMcuIcons
+import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
+import dev.begeistert.pymcu.config.PyMcuConfig
+import dev.begeistert.pymcu.lint.LintFinding
+import dev.begeistert.pymcu.lint.LintReport
+import dev.begeistert.pymcu.lint.PyMcuLintResults
+import dev.begeistert.pymcu.lint.PyMcuLintResultsListener
+import dev.begeistert.pymcu.project.PyMcuConfigListener
+import dev.begeistert.pymcu.project.PyMcuProjectService
 import java.awt.BorderLayout
-import java.awt.Dimension
-import javax.swing.Box
-import javax.swing.BoxLayout
-import javax.swing.JButton
-import javax.swing.JLabel
+import java.awt.event.MouseEvent
+import java.io.File
+import javax.swing.BorderFactory
 import javax.swing.JPanel
-import javax.swing.JScrollPane
-import javax.swing.JTextArea
 import javax.swing.SwingUtilities
+import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreeSelectionModel
 
 /**
- * Factory for the "PyMCU" tool window (anchor=bottom).
+ * The "PyMCU" tool window: what the project targets, the actions that operate
+ * on it, and the porting assistant's findings.
  *
- * Panel layout (BoxLayout vertical):
- *   - Chip info label
- *   - Build / Flash / Clean / Sync buttons
- *   - Scrollable output text area
+ * The previous version ran commands itself and appended their output to a
+ * `JTextArea` — no stop button, no exit code, no clickable diagnostics. Commands
+ * now go through the run/debug framework
+ * ([dev.begeistert.pymcu.run.PyMcuTaskRunner]) and this panel is left to do what
+ * a tool window is good at: show state and offer navigation.
  */
-class PyMcuToolWindowFactory : ToolWindowFactory {
+class PyMcuToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = PyMcuToolWindowPanel(project)
-        val content = ContentFactory.getInstance()
-            .createContent(panel, "", false)
+        Disposer.register(toolWindow.disposable, panel)
+        val content = ContentFactory.getInstance().createContent(panel, "", false)
         toolWindow.contentManager.addContent(content)
     }
 
-    override fun shouldBeAvailable(project: Project): Boolean = true
+    override suspend fun isApplicableAsync(project: Project): Boolean =
+        PyMcuProjectService.getInstance(project).isPyMcuProject
 }
 
-private class PyMcuToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
+private class PyMcuToolWindowPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
-    private val log = Logger.getInstance(PyMcuToolWindowPanel::class.java)
-
-    private val chipLabel = JLabel("No PyMCU project detected")
-    private val outputArea = JTextArea(8, 60).apply {
-        isEditable = false
-        font = java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12)
+    private val targetLabel = JBLabel()
+    private val findingsRoot = DefaultMutableTreeNode("PyMCU")
+    private val findingsModel = DefaultTreeModel(findingsRoot)
+    private val findingsTree = Tree(findingsModel).apply {
+        isRootVisible = false
+        showsRootHandles = true
+        selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+        cellRenderer = FindingRenderer()
     }
 
     init {
-        val topPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(chipLabel)
-            add(Box.createVerticalStrut(6))
-            add(buildButtonRow())
-            add(Box.createVerticalStrut(4))
+        border = JBUI.Borders.empty(4)
+
+        val header = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createEmptyBorder(0, JBUI.scale(4), JBUI.scale(4), 0)
+            add(targetLabel, BorderLayout.CENTER)
         }
 
-        add(topPanel, BorderLayout.NORTH)
-        add(JScrollPane(outputArea), BorderLayout.CENTER)
+        add(actionToolbar(), BorderLayout.WEST)
+        add(JPanel(BorderLayout()).apply {
+            add(header, BorderLayout.NORTH)
+            add(JBScrollPane(findingsTree), BorderLayout.CENTER)
+        }, BorderLayout.CENTER)
 
-        refreshChipLabel()
-        registerVfsListener()
+        object : DoubleClickListener() {
+            override fun onDoubleClick(event: MouseEvent): Boolean = navigateToSelection()
+        }.installOn(findingsTree)
+
+        subscribe()
+        refreshTarget()
+        renderFindings(PyMcuLintResults.getInstance(project).report)
     }
 
-    private fun buildButtonRow(): JPanel {
-        val row = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
-        }
+    // ── toolbar ──────────────────────────────────────────────────────────────
 
-        listOf("Build" to "build", "Flash" to "flash", "Clean" to "clean").forEach { (label, cmd) ->
-            val btn = JButton(label).apply {
-                maximumSize = Dimension(80, 28)
-                addActionListener { runCommand(cmd) }
+    private fun actionToolbar(): JPanel {
+        val group = ActionManager.getInstance().getAction("PyMcu.ToolWindowToolbar") as? DefaultActionGroup
+            ?: DefaultActionGroup()
+        val toolbar = ActionManager.getInstance()
+            .createActionToolbar(ActionPlaces.TOOLWINDOW_CONTENT, group, false)
+        toolbar.targetComponent = this
+        return JPanel(BorderLayout()).apply { add(toolbar.component, BorderLayout.NORTH) }
+    }
+
+    // ── state ────────────────────────────────────────────────────────────────
+
+    private fun subscribe() {
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(PyMcuConfigListener.TOPIC, PyMcuConfigListener {
+            SwingUtilities.invokeLater { refreshTarget() }
+        })
+        connection.subscribe(PyMcuLintResultsListener.TOPIC, PyMcuLintResultsListener { report ->
+            SwingUtilities.invokeLater { renderFindings(report) }
+        })
+    }
+
+    private fun refreshTarget() {
+        val config = PyMcuProjectService.config(project)
+        targetLabel.text = config?.let(::describe) ?: "No PyMCU project detected"
+    }
+
+    private fun describe(config: PyMcuConfig): String {
+        val catalog = PyMcuBoardCatalogService.getInstance(project).cachedOrFallback()
+        val chip = config.explicitChip ?: config.board?.let(catalog::chipOf)
+        val parts = mutableListOf<String>()
+
+        parts += when {
+            config.board != null && chip != null -> "${config.board} ($chip)"
+            config.board != null -> config.board
+            chip != null -> chip
+            else -> "no target set"
+        }
+        config.architecture(chip)?.let { parts += it }
+        config.frequency?.let { parts += formatFrequency(it) }
+        config.flavor?.let { parts += "$it compat" }
+        if (config.hasFfi) parts += "C/C++ FFI"
+
+        return parts.joinToString("  ·  ")
+    }
+
+    /** 16000000 → "16 MHz", 16500000 → "16.5 MHz", 32768 → "32768 Hz". */
+    private fun formatFrequency(hz: Long): String {
+        if (hz < 1_000_000) return "$hz Hz"
+        val mhz = hz / 1_000_000.0
+        return if (mhz == Math.floor(mhz)) "${mhz.toLong()} MHz" else "$mhz MHz"
+    }
+
+    // ── findings ─────────────────────────────────────────────────────────────
+
+    private fun renderFindings(report: LintReport?) {
+        findingsRoot.removeAllChildren()
+
+        if (report == null) {
+            findingsRoot.add(DefaultMutableTreeNode(MessageNode(
+                "Run the porting assistant to list MicroPython / CircuitPython idioms that need a rewrite."
+            )))
+        } else if (report.allFindings.isEmpty()) {
+            findingsRoot.add(DefaultMutableTreeNode(MessageNode(
+                "No findings — this should port cleanly."
+            )))
+        } else {
+            for (file in report.files) {
+                if (file.findings.isEmpty()) continue
+                val fileNode = DefaultMutableTreeNode(FileNode(file.path, file.findings.size))
+                for (finding in file.findings) {
+                    fileNode.add(DefaultMutableTreeNode(FindingNode(file.path, finding)))
+                }
+                findingsRoot.add(fileNode)
             }
-            row.add(btn)
-            row.add(Box.createHorizontalStrut(4))
         }
 
-        val syncBtn = JButton("Sync Project").apply {
-            maximumSize = Dimension(110, 28)
-            addActionListener { runSync() }
-        }
-        row.add(syncBtn)
-        return row
+        findingsModel.reload()
+        for (row in 0 until findingsTree.rowCount) findingsTree.expandRow(row)
     }
 
-    private fun refreshChipLabel() {
-        val config = PyMcuConfigReader.findConfig(project)
-        if (config == null) {
-            chipLabel.text = "No PyMCU project detected"
-            return
-        }
-        val sb = StringBuilder(if (config.board != null) "Board: " else "Chip: ")
-        sb.append(config.displayName)
-        if (config.frequency != null) sb.append(" @ ${config.frequency} Hz")
-        if (config.stdlib.isNotEmpty()) sb.append(" · ${config.stdlib.joinToString(", ")}")
-        if (config.hasFfi) sb.append(" · C/C++ FFI")
-        chipLabel.text = sb.toString()
+    private fun navigateToSelection(): Boolean {
+        val node = findingsTree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return false
+        val finding = node.userObject as? FindingNode ?: return false
+        // `pymcu lint` echoes back the path it was given, so it is relative when
+        // the caller passed a relative one; resolve against the project either way.
+        val reported = File(finding.path)
+        val target = if (reported.isAbsolute) reported else File(project.basePath ?: "", finding.path)
+        val file = LocalFileSystem.getInstance().findFileByIoFile(target) ?: return false
+        OpenFileDescriptor(project, file, finding.finding.line - 1, (finding.finding.col - 1).coerceAtLeast(0))
+            .navigate(true)
+        return true
     }
 
-    private fun registerVfsListener() {
-        project.messageBus.connect().subscribe(
-            VirtualFileManager.VFS_CHANGES,
-            object : BulkFileListener {
-                override fun after(events: List<VFileEvent>) {
-                    val touchedPyproject = events.any {
-                        it.file?.name == "pyproject.toml"
+    override fun dispose() = Unit
+
+    // ── tree model ───────────────────────────────────────────────────────────
+
+    private data class MessageNode(val text: String)
+    private data class FileNode(val path: String, val count: Int)
+    private data class FindingNode(val path: String, val finding: LintFinding)
+
+    private class FindingRenderer : ColoredTreeCellRenderer() {
+        override fun customizeCellRenderer(
+            tree: javax.swing.JTree, value: Any?, selected: Boolean, expanded: Boolean,
+            leaf: Boolean, row: Int, hasFocus: Boolean
+        ) {
+            when (val payload = (value as? DefaultMutableTreeNode)?.userObject) {
+                is MessageNode -> append(payload.text, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+
+                is FileNode -> {
+                    append(File(payload.path).name)
+                    append("  ${payload.count} finding(s)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    icon = PyMcuIcons.PyMcu
+                }
+
+                is FindingNode -> {
+                    val finding = payload.finding
+                    val attributes = when (finding.severity) {
+                        "error" -> SimpleTextAttributes.ERROR_ATTRIBUTES
+                        "warn" -> SimpleTextAttributes.SYNTHETIC_ATTRIBUTES
+                        else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
                     }
-                    if (touchedPyproject) {
-                        SwingUtilities.invokeLater { refreshChipLabel() }
+                    append("${finding.line}:${finding.col}  ", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    append(finding.code, SimpleTextAttributes.GRAYED_BOLD_ATTRIBUTES)
+                    append("  ${finding.message}", attributes)
+                    if (finding.suggestion.isNotBlank()) {
+                        append("  → ${finding.suggestion}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                     }
                 }
             }
-        )
-    }
-
-    private fun runCommand(command: String) {
-        val settings = PyMcuSettings.getInstance()
-        val basePath = project.basePath ?: run {
-            appendOutput("Error: cannot determine project base directory.\n")
-            return
         }
-
-        appendOutput("$ ${settings.executablePath} $command\n")
-
-        ApplicationManager.getApplication().executeOnPooledThread {
-            try {
-                val process = ProcessBuilder(settings.executablePath, command)
-                    .directory(java.io.File(basePath))
-                    .redirectErrorStream(true)
-                    .start()
-
-                val output = process.inputStream.bufferedReader().readText()
-                process.waitFor()
-
-                SwingUtilities.invokeLater { appendOutput(output) }
-            } catch (e: Exception) {
-                SwingUtilities.invokeLater {
-                    appendOutput("Error running command: ${e.message}\n")
-                }
-                log.error("PyMCU toolwindow command error", e)
-            }
-        }
-    }
-
-    private fun runSync() {
-        val settings = PyMcuSettings.getInstance()
-        val basePath = project.basePath ?: run {
-            appendOutput("Error: cannot determine project base directory.\n")
-            return
-        }
-
-        val command: List<String> = when (settings.packageManager) {
-            "uv"     -> listOf("uv", "sync")
-            "poetry" -> listOf("poetry", "install")
-            "pipenv" -> listOf("pipenv", "install")
-            "pip"    -> listOf("pip", "install", "-e", ".")
-            else     -> listOf("uv", "sync")
-        }
-
-        appendOutput("$ ${command.joinToString(" ")}\n")
-
-        ApplicationManager.getApplication().executeOnPooledThread {
-            try {
-                val process = ProcessBuilder(command)
-                    .directory(java.io.File(basePath))
-                    .redirectErrorStream(true)
-                    .start()
-
-                val output = process.inputStream.bufferedReader().readText()
-                process.waitFor()
-
-                SwingUtilities.invokeLater { appendOutput(output) }
-            } catch (e: Exception) {
-                SwingUtilities.invokeLater {
-                    appendOutput("Error during sync: ${e.message}\n")
-                }
-                log.error("PyMCU toolwindow sync error", e)
-            }
-        }
-    }
-
-    private fun appendOutput(text: String) {
-        outputArea.append(text)
-        outputArea.caretPosition = outputArea.document.length
     }
 }

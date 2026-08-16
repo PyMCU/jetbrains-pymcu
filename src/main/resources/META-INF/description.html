@@ -1,0 +1,26 @@
+<p>
+  Official PyCharm support for <a href="https://github.com/PyMCU/PyMCU">PyMCU</a> — a compiler that
+  turns a statically-typed subset of Python into bare-metal firmware for
+  <b>AVR, RP2040 / RP2350, PIC and RISC-V</b> microcontrollers. No runtime, no interpreter, no VM.
+</p>
+
+<ul>
+  <li><b>Build, flash and clean</b> as run configurations, with <code>pymcuc</code> diagnostics
+      turned into clickable <code>file:line:col</code> links in the console.</li>
+  <li><b>Porting assistant</b> — <code>pymcu lint</code> findings appear as editor annotations as you
+      type or save, each with a concrete rewrite. Paste MicroPython code and follow the squiggles
+      until it compiles.</li>
+  <li><b>Resolution and completion</b> for <code>pymcu.*</code>, the MicroPython / CircuitPython
+      compat layers (<code>machine</code>, <code>board</code>, <code>digitalio</code>, …) and the
+      generated <code>board</code> module for your target.</li>
+  <li><b>Project configuration dialog</b> — board, clock, compat stdlib, programmer, serial port and
+      AVR fuses, written back to <code>[tool.pymcu]</code> without disturbing your formatting.
+      The board list comes from the installed CLI, so it always matches your backends.</li>
+  <li><b>Status bar target indicator</b>, serial-port picker on flash, and a New Project wizard that
+      scaffolds a working blink for the board you pick.</li>
+</ul>
+
+<p>
+  Requires the PyMCU CLI: <code>pipx install pymcu-compiler</code>, or add
+  <code>pymcu-compiler</code> to your project with <code>uv</code>.
+</p>

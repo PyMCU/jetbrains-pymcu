@@ -5,126 +5,76 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 
 /**
- * Holds the parsed contents of the [tool.pymcu] section of pyproject.toml.
- */
-data class PyMcuConfig(
-    /** Explicit chip name, e.g. "atmega328p". Null when [board] is set instead. */
-    val chip: String?,
-    /** Board alias, e.g. "arduino_uno". Takes precedence over [chip] for display. */
-    val board: String?,
-    val frequency: String?,
-    val sources: String?,
-    val entry: String?,
-    /** Compat stdlib flavors declared via  stdlib = ["micropython"]  or  ["circuitpython"]. */
-    val stdlib: List<String> = emptyList(),
-    /** True when a [tool.pymcu.ffi] section is present in pyproject.toml. */
-    val hasFfi: Boolean = false
-) {
-    /** Human-readable display name: prettified board name, chip name, or "(unknown)". */
-    val displayName: String
-        get() = when (board) {
-            "arduino_uno"   -> "Arduino Uno (atmega328p)"
-            "arduino_nano"  -> "Arduino Nano (atmega328p)"
-            "arduino_mega"  -> "Arduino Mega (atmega2560)"
-            "arduino_micro" -> "Arduino Micro (atmega32u4)"
-            else            -> board ?: chip ?: "(unknown)"
-        }
-}
-
-/**
- * Reads [tool.pymcu] from pyproject.toml located at the project base directory.
- * Uses simple regex — no external TOML library required.
+ * Reads `[tool.pymcu]` from the `pyproject.toml` at the project base directory.
+ *
+ * Prefer [dev.begeistert.pymcu.project.PyMcuProjectService] over calling this
+ * directly: the service caches the result and invalidates it on file changes,
+ * while every call here re-reads and re-parses the file.
  */
 object PyMcuConfigReader {
 
-    private val SECTION_RE      = Regex("""\[tool\.pymcu]""")
-    private val FFI_SECTION_RE  = Regex("""\[tool\.pymcu\.ffi]""")
-
-    // Matches key = "value"  or  key = 'value'  or  key = bare_value (not arrays)
-    private val KV_RE           = Regex("""^\s*(\w+)\s*=\s*["']?([^"'\[\n\r]+?)["']?\s*$""")
-
-    // Matches  stdlib = ["micropython"]  or  stdlib = ["circuitpython", "other"]
-    private val STDLIB_ARRAY_RE = Regex("""^\s*stdlib\s*=\s*\[([^\]]*)]""")
-
-    // Matches a new [section] header (to stop parsing)
-    private val NEW_SECTION_RE  = Regex("""^\s*\[""")
-
-    /**
-     * Locate pyproject.toml in the project base directory.
-     */
     fun findPyproject(project: Project): VirtualFile? {
         val basePath = project.basePath ?: return null
         return LocalFileSystem.getInstance().findFileByPath("$basePath/pyproject.toml")
     }
 
-    /**
-     * Parse [tool.pymcu] and return a [PyMcuConfig], or null if the file/section is absent.
-     */
     fun findConfig(project: Project): PyMcuConfig? {
         val file = findPyproject(project) ?: return null
-        return parseContent(String(file.contentsToByteArray()))
+        return parseContent(String(file.contentsToByteArray(), Charsets.UTF_8))
     }
 
-    /**
-     * Exposed for tests — parse raw TOML content.
-     */
+    /** Parses raw TOML. Returns null when there is no `[tool.pymcu]` section. */
     fun parseContent(content: String): PyMcuConfig? {
-        val lines = content.lines()
+        val root = TomlLite.parse(content)
+        val tool = root["tool"] as? Map<*, *> ?: return null
+        val pymcu = tool["pymcu"] as? Map<*, *> ?: return null
 
-        // Check for [tool.pymcu.ffi] anywhere in the file
-        val hasFfi = lines.any { FFI_SECTION_RE.containsMatchIn(it) }
-
-        // Find the [tool.pymcu] section start
-        var sectionStart = -1
-        for ((index, line) in lines.withIndex()) {
-            if (SECTION_RE.containsMatchIn(line)) {
-                sectionStart = index + 1
-                break
-            }
-        }
-        if (sectionStart < 0) return null
-
-        // Collect key=value pairs until the next section header
-        var chip: String?      = null
-        var board: String?     = null
-        var frequency: String? = null
-        var sources: String?   = null
-        var entry: String?     = null
-        var stdlib             = emptyList<String>()
-
-        for (i in sectionStart until lines.size) {
-            val line = lines[i]
-            if (NEW_SECTION_RE.containsMatchIn(line)) break
-
-            // stdlib array: stdlib = ["micropython"]  or  stdlib = ["circuitpython"]
-            STDLIB_ARRAY_RE.find(line)?.let { m ->
-                stdlib = m.groupValues[1]
-                    .split(",")
-                    .map { it.trim().trim('"', '\'') }
-                    .filter { it.isNotEmpty() }
-                return@let
-            }
-
-            val match = KV_RE.matchEntire(line) ?: continue
-            val key   = match.groupValues[1]
-            val value = match.groupValues[2].trim()
-            when (key) {
-                "chip"      -> chip      = value
-                "board"     -> board     = value
-                "frequency" -> frequency = value
-                "sources"   -> sources   = value
-                "entry"     -> entry     = value
-            }
-        }
+        val flash = pymcu["flash"] as? Map<*, *> ?: emptyMap<Any?, Any?>()
+        // [tool.pymcu.programmer] name = "..." is the pre-0.15 spelling the driver
+        // still reads as a fallback; mirror that so old projects display correctly.
+        val legacyProgrammer = (pymcu["programmer"] as? Map<*, *>)?.get("name")?.asString()
 
         return PyMcuConfig(
-            chip      = chip,
-            board     = board,
-            frequency = frequency,
-            sources   = sources,
-            entry     = entry,
-            stdlib    = stdlib,
-            hasFfi    = hasFfi
+            target = pymcu["target"].asString(),
+            board = pymcu["board"].asString(),
+            chip = pymcu["chip"].asString(),
+            frequency = pymcu["frequency"].asLong(),
+            sources = pymcu["sources"].asString() ?: "src",
+            entry = pymcu["entry"].asString() ?: "main.py",
+            stdlib = (pymcu["stdlib"] as? List<*>)?.mapNotNull { it.asString() } ?: emptyList(),
+            flash = PyMcuFlashConfig(
+                programmer = flash["programmer"].asString() ?: legacyProgrammer,
+                port = flash["port"].asString(),
+                baud = flash["baud"].asLong()?.toInt(),
+                fuseLow = flash["fuse_low"].asString(),
+                fuseHigh = flash["fuse_high"].asString(),
+                fuseExt = flash["fuse_ext"].asString(),
+            ),
+            toolchain = (pymcu["toolchain"] as? Map<*, *>)?.get("name")?.asString(),
+            configWords = (pymcu["config"] as? Map<*, *>)
+                ?.mapNotNull { (k, v) ->
+                    val key = k?.toString() ?: return@mapNotNull null
+                    val value = v.asString() ?: return@mapNotNull null
+                    key to value
+                }?.toMap() ?: emptyMap(),
+            stdout = pymcu["stdout"].asString(),
+            stdoutBaud = pymcu["stdout_baud"].asLong()?.toInt(),
+            hasFfi = pymcu["ffi"] is Map<*, *>,
         )
+    }
+
+    private fun Any?.asString(): String? = when (this) {
+        is String -> takeIf { it.isNotBlank() }
+        null -> null
+        is Map<*, *>, is List<*> -> null
+        else -> toString()
+    }
+
+    private fun Any?.asLong(): Long? = when (this) {
+        is Long -> this
+        is Int -> toLong()
+        is Double -> toLong()
+        is String -> replace("_", "").trim().toLongOrNull()
+        else -> null
     }
 }

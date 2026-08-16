@@ -3,21 +3,17 @@ package dev.begeistert.pymcu.run
 import com.intellij.execution.actions.ConfigurationContext
 import com.intellij.execution.actions.LazyRunConfigurationProducer
 import com.intellij.execution.configurations.ConfigurationFactory
-import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.util.Ref
 import com.intellij.psi.PsiElement
-import dev.begeistert.pymcu.config.PyMcuConfigReader
+import dev.begeistert.pymcu.project.PyMcuProjectService
 
 /**
- * Automatically produces a "PyMCU Build" run configuration when the user
- * right-clicks inside a pymcu project (pyproject.toml with [tool.pymcu] at root).
+ * Offers a "pymcu build" configuration from the context menu inside a PyMCU
+ * project (a `pyproject.toml` with `[tool.pymcu]` at the root).
  */
-@Suppress("UnstableApiUsage")
 class PyMcuRunConfigurationProducer : LazyRunConfigurationProducer<PyMcuRunConfiguration>() {
 
-    override fun getConfigurationFactory(): ConfigurationFactory {
-        return PyMcuRunConfigurationType().getFactory()
-    }
+    override fun getConfigurationFactory(): ConfigurationFactory = PyMcuRunConfigurationType.factory()
 
     override fun setupConfigurationFromContext(
         configuration: PyMcuRunConfiguration,
@@ -25,9 +21,8 @@ class PyMcuRunConfigurationProducer : LazyRunConfigurationProducer<PyMcuRunConfi
         sourceElement: Ref<PsiElement>
     ): Boolean {
         val project = context.project
-        // Only produce a config if this is a pymcu project
-        PyMcuConfigReader.findConfig(project) ?: return false
-        configuration.name = "PyMCU Build"
+        if (!PyMcuProjectService.getInstance(project).isPyMcuProject) return false
+        configuration.name = "pymcu build"
         configuration.command = "build"
         return true
     }
@@ -37,6 +32,6 @@ class PyMcuRunConfigurationProducer : LazyRunConfigurationProducer<PyMcuRunConfi
         context: ConfigurationContext
     ): Boolean {
         if (configuration.command != "build") return false
-        return PyMcuConfigReader.findConfig(context.project) != null
+        return PyMcuProjectService.getInstance(context.project).isPyMcuProject
     }
 }

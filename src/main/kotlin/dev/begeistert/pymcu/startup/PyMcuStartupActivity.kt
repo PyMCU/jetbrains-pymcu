@@ -1,193 +1,94 @@
 package dev.begeistert.pymcu.startup
 
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManagerListener
-import com.intellij.openapi.roots.ex.ProjectRootManagerEx
-import com.intellij.openapi.vfs.LocalFileSystem
-import dev.begeistert.pymcu.config.PyMcuConfigReader
+import com.intellij.openapi.startup.ProjectActivity
+import dev.begeistert.pymcu.actions.PyMcuSyncTask
+import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
+import dev.begeistert.pymcu.cli.PyMcuCli
+import dev.begeistert.pymcu.notifications.PyMcuNotifications
+import dev.begeistert.pymcu.project.PyMcuProjectService
+import dev.begeistert.pymcu.resolver.PyMcuLibraryRootsRefresher
+import dev.begeistert.pymcu.run.PyMcuExecutionListener
 import dev.begeistert.pymcu.settings.PyMcuSettings
-import dev.begeistert.pymcu.stdlib.PyMcuStubInstaller
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
- * Reacts to project-open events via ProjectManagerListener, which fires reliably
- * in PyCharm Community regardless of plugin dependency ordering.
+ * Project-open hook for PyMCU projects.
  *
- * Neither ProjectActivity (coroutine-based) nor StartupActivity.DumbAware fire
- * reliably in PyCharm Community 2024.3 when com.intellij.modules.python is a
- * plugin dependency — the message-bus listener approach is the safe alternative.
+ * WHY it no longer runs `uv sync` unconditionally: the previous version shelled
+ * out to the package manager on every project open, off any progress indicator
+ * and with no way to decline. Opening a project should not mutate a virtualenv.
+ * It now checks what is missing and *offers* the sync, running it under a
+ * cancellable background task when the user accepts.
  *
- * When a [tool.pymcu] section is detected in pyproject.toml it:
- *  1. Dispatches to a pooled thread; installs compat stubs and board.py into
- *     .venv/site-packages / dist/_generated/ so PyCharm resolves imports.
- *  2. Runs a background dependency sync (uv sync / pip install / …).
- *  3. Reinstalls stubs after sync in case the .venv was freshly created.
+ * [ProjectActivity] is the current API; the plugin previously used an
+ * application-level `ProjectManagerListener`, which is deprecated for this use
+ * and fires before the project's services are usable.
  */
-@Suppress("UnstableApiUsage")
-class PyMcuStartupActivity : ProjectManagerListener {
+class PyMcuStartupActivity : ProjectActivity {
 
     private val log = Logger.getInstance(PyMcuStartupActivity::class.java)
 
-    override fun projectOpened(project: Project) {
-        log.info("PyMCU: projectOpened fired for ${project.name}")
+    override suspend fun execute(project: Project) {
+        val config = PyMcuProjectService.getInstance(project).config() ?: return
+        log.info("PyMCU project detected: ${config.targetLabel ?: "(no target)"}")
 
-        val config = PyMcuConfigReader.findConfig(project) ?: run {
-            log.info("PyMCU: no [tool.pymcu] config found, skipping.")
-            return
-        }
-        val basePath = project.basePath ?: return
+        PyMcuExecutionListener.subscribe(project)
 
-        log.info("PyMCU project detected (${config.displayName}), starting setup.")
-
-        val settings = PyMcuSettings.getInstance()
-        ApplicationManager.getApplication().executeOnPooledThread {
-            // Install stubs for a pre-existing .venv, then sync to ensure the
-            // venv is up-to-date, then reinstall stubs regardless of sync result.
-            if (config.stdlib.isNotEmpty()) {
-                val sp = PyMcuStubInstaller.install(basePath, config.stdlib, config.board)
-                refreshAndNotify(project, basePath, sp)
+        withContext(Dispatchers.IO) {
+            // Probe the CLI before anything that shells out, so a machine without
+            // pymcu installed waits on one short timeout rather than several.
+            if (!PyMcuCli.isAvailable(project)) {
+                warnCliMissing(project)
+                return@withContext
             }
-            runSync(project, basePath, settings.packageManager, config.stdlib, config.board)
+
+            // Warm the board catalog so the status bar and the configure dialog
+            // do not have to block on the CLI the first time they are used.
+            PyMcuBoardCatalogService.getInstance(project).get()
+
+            PyMcuLibraryRootsRefresher.refresh(project)
+            offerSyncIfNeeded(project)
         }
     }
 
-    private fun runSync(
-        project: Project,
-        basePath: String,
-        packageManager: String,
-        stdlib: List<String>,
-        board: String?
-    ) {
-        val command: List<String> = when (packageManager) {
-            "uv"     -> listOf("uv", "sync")
-            "poetry" -> listOf("poetry", "install")
-            "pipenv" -> listOf("pipenv", "install")
-            "pip"    -> listOf("pip", "install", "-e", ".")
-            else     -> listOf("uv", "sync")
-        }
-
-        log.info("PyMCU sync: running ${command.joinToString(" ")} in $basePath")
-
-        try {
-            val process = ProcessBuilder(command)
-                .directory(java.io.File(basePath))
-                .redirectErrorStream(true)
-                .start()
-
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
-
-            if (exitCode == 0) {
-                log.info("PyMCU sync succeeded.")
-                notifySuccess(project)
-            } else {
-                log.warn("PyMCU sync failed (exit $exitCode):\n$output")
-                notifyFailure(project, exitCode)
-            }
-
-            // Reinstall stubs regardless of sync result — if .venv was already
-            // populated (e.g. by a previous manual sync or a private registry that
-            // the plugin's subprocess can't authenticate to), we still want the IDE
-            // stubs and dist/_generated/board.py to be in place.
-            if (stdlib.isNotEmpty()) {
-                val sp = PyMcuStubInstaller.install(basePath, stdlib, board)
-                refreshAndNotify(project, basePath, sp)
-            }
-        } catch (e: Exception) {
-            log.error("PyMCU sync error", e)
-            notifyFailure(project, -1)
-        }
+    private fun warnCliMissing(project: Project) {
+        PyMcuNotifications.warn(
+            project,
+            "PyMCU CLI not found",
+            "The <code>pymcu</code> executable could not be run. Install it with " +
+                "<code>pipx install pymcu-compiler</code>, or set the path in Settings | Tools | PyMCU.",
+            PyMcuNotifications.action("Installation guide") {
+                BrowserUtil.browse("https://github.com/PyMCU/PyMCU#readme")
+            },
+        )
     }
 
     /**
-     * Two-step VFS + roots notification — called from a background thread after
-     * stubs/board.py are written to disk.
-     *
-     * **Why two steps are needed:**
-     * `AdditionalLibraryRootsProvider.getAdditionalProjectLibraries()` is always
-     * called under a read action. Inside a read action, `refreshAndFindFileByNioFile`
-     * cannot be called (it acquires a VFS write lock, which deadlocks under a read
-     * lock). So the provider uses `findFileByNioFile`, which returns `null` if the
-     * VirtualFile is not already in the VFS cache.
-     *
-     * Step 1 — pre-populate VFS:
-     *   `refreshAndFindFileByNioFile` is safe on background threads. It forces the
-     *   VFS to create VirtualFile entries for `pymcu_circuitpython/`,
-     *   `pymcu_micropython/`, and `dist/_generated/`, so subsequent
-     *   `findFileByNioFile` calls (inside the read-action provider) return non-null.
-     *
-     * Step 2 — fire roots-changed event:
-     *   `ProjectRootManagerEx.makeRootsChange()` fires `PROJECT_ROOTS_CHANGED`,
-     *   which invalidates the cached additional library roots and causes IntelliJ
-     *   to re-call `getAdditionalProjectLibraries()`. This second call succeeds
-     *   because VFS is now populated (step 1 already ran).
+     * Offers a sync when the generated support files are absent — the state a
+     * freshly cloned project is in, where `import board` and the compat imports
+     * would otherwise show up unresolved.
      */
-    private fun refreshAndNotify(
-        project: Project,
-        basePath: String,
-        sitePackages: java.nio.file.Path?
-    ) {
-        // Step 1: pre-populate VFS (safe from background thread, outside read action)
-        val lfs = LocalFileSystem.getInstance()
-        sitePackages?.let { sp ->
-            lfs.refreshAndFindFileByNioFile(sp.resolve("pymcu_circuitpython"))
-            lfs.refreshAndFindFileByNioFile(sp.resolve("pymcu_micropython"))
-        }
-        lfs.refreshAndFindFileByNioFile(java.nio.file.Path.of(basePath, "dist", "_generated"))
+    private fun offerSyncIfNeeded(project: Project) {
+        if (!PyMcuSettings.getInstance().offerSyncOnOpen) return
+        val basePath = project.basePath ?: return
+        val generated = File(basePath, "dist/_generated")
+        val stubs = File(basePath, PyMcuSyncTask.STUBS_DIR)
+        if (generated.isDirectory && stubs.isDirectory) return
 
-        // Also refresh site-packages so new .pyi stubs are indexed by PyCharm's
-        // Python analysis engine (handles the case where the SDK is correctly pointed
-        // at this .venv and PyCharm indexes site-packages as SDK library roots).
-        sitePackages?.let { sp ->
-            lfs.refreshNioFiles(
-                listOf(sp),
-                /* async = */ true,
-                /* recursive = */ false,
-                /* postRunnable = */ null
-            )
-        }
-
-        // Step 2: re-trigger AdditionalLibraryRootsProvider evaluation on EDT
-        ApplicationManager.getApplication().invokeLater {
-            if (!project.isDisposed) {
-                ApplicationManager.getApplication().runWriteAction {
-                    ProjectRootManagerEx.getInstanceEx(project)
-                        .makeRootsChange(Runnable { /* no-op */ }, /* isFakeChange = */ false, /* fireWorkerThreads = */ false)
-                }
-            }
-        }
-    }
-
-    private fun notifySuccess(project: Project) {
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                NotificationGroupManager.getInstance()
-                    .getNotificationGroup("PyMCU")
-                    ?.createNotification(
-                        "PyMCU Sync",
-                        "Project synced successfully.",
-                        NotificationType.INFORMATION
-                    )
-                    ?.notify(project)
-            } catch (_: Exception) { }
-        }
-    }
-
-    private fun notifyFailure(project: Project, exitCode: Int) {
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                NotificationGroupManager.getInstance()
-                    .getNotificationGroup("PyMCU")
-                    ?.createNotification(
-                        "PyMCU Sync",
-                        "Project sync failed (exit code $exitCode).",
-                        NotificationType.WARNING
-                    )
-                    ?.notify(project)
-            } catch (_: Exception) { }
-        }
+        PyMcuNotifications.info(
+            project,
+            "PyMCU project",
+            "Generated IDE support files are missing, so compat imports may not resolve. " +
+                "Sync installs dependencies and regenerates them.",
+            PyMcuNotifications.action("Sync now") { PyMcuSyncTask.launch(project) },
+            PyMcuNotifications.action("Don't ask again") {
+                PyMcuSettings.getInstance().offerSyncOnOpen = false
+            },
+        )
     }
 }

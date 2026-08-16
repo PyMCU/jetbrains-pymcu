@@ -1,114 +1,143 @@
 package dev.begeistert.pymcu.newproject
 
 import com.intellij.ide.util.projectWizard.SettingsStep
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.platform.ProjectGeneratorPeer
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
-import java.awt.Insets
-import javax.swing.*
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBTextField
+import com.intellij.util.ui.FormBuilder
+import dev.begeistert.pymcu.cli.BoardCatalog
+import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
+import dev.begeistert.pymcu.cli.PyMcuCli
+import dev.begeistert.pymcu.settings.PyMcuSettings
+import java.awt.event.ItemEvent
+import javax.swing.JComponent
+import javax.swing.JPanel
 
 /**
- * The settings panel shown in PyCharm's New Project wizard for PyMCU projects.
+ * New Project wizard panel.
  *
- * Layout (GridBagLayout rows):
- *   0  Board      — Arduino Uno / Nano / Mega / Micro  or  "Custom chip…"
- *   1  Chip       — visible only when board = "Custom chip…"
- *   2  Frequency  — CPU clock
- *   3  Stdlib     — None / MicroPython compat / CircuitPython compat
- *   4  Pkg mgr    — uv / pip / poetry / pipenv
- *   5  Hint
+ * The board list is loaded from `pymcu boards --json` in the background: the
+ * previous panel hardcoded four Arduino boards and eight AVR chips, which
+ * silently hid every RP2040, PIC and RISC-V target the driver has since gained.
  */
 class PyMcuProjectGeneratorPeer : ProjectGeneratorPeer<PyMcuNewProjectSettings> {
 
-    // ── Board combos ────────────────────────────────────────────────────────
-    private val boardDisplayItems = arrayOf(
-        "Arduino Uno  (atmega328p, 16 MHz)",
-        "Arduino Nano (atmega328p, 16 MHz)",
-        "Arduino Mega (atmega2560, 16 MHz)",
-        "Arduino Micro (atmega32u4, 16 MHz)",
-        "Custom chip…"
-    )
-    private val boardValues = arrayOf(
-        "arduino_uno", "arduino_nano", "arduino_mega", "arduino_micro", null
-    )
-    // Default chip frequencies for each board slot (used when board is selected)
-    private val boardFreqDefaults = intArrayOf(
-        16_000_000, 16_000_000, 16_000_000, 16_000_000, 16_000_000
-    )
-
-    // ── Custom chip (shown only for "Custom chip…" board selection) ─────────
-    private val chipItems = arrayOf(
-        "atmega328p", "atmega2560", "atmega32u4", "atmega168", "atmega88",
-        "attiny85", "attiny84", "attiny2313"
-    )
-
-    // ── Frequency ────────────────────────────────────────────────────────────
-    private val freqItems = arrayOf(
-        "16000000 Hz (16 MHz)",
-        "8000000 Hz  (8 MHz)",
-        "4000000 Hz  (4 MHz)",
-        "1000000 Hz  (1 MHz)"
-    )
-    private val freqValues = intArrayOf(16_000_000, 8_000_000, 4_000_000, 1_000_000)
-
-    // ── Stdlib compat ────────────────────────────────────────────────────────
-    private val stdlibItems = arrayOf(
-        "None (bare PyMCU)",
-        "MicroPython compat  (machine, utime…)",
-        "CircuitPython compat  (board, digitalio, busio…)"
-    )
-    private val stdlibValues = arrayOf("none", "micropython", "circuitpython")
-
-    // ── Package manager ──────────────────────────────────────────────────────
-    private val pmItems = arrayOf("uv", "pip", "poetry", "pipenv")
-
-    // ── UI components ────────────────────────────────────────────────────────
-    private val boardCombo  = JComboBox(boardDisplayItems)
-    private val chipCombo   = JComboBox(chipItems)
-    private val freqCombo   = JComboBox(freqItems)
-    private val stdlibCombo = JComboBox(stdlibItems)
-    private val pmCombo     = JComboBox(pmItems)
-
-    private val chipLabel   = JLabel("Chip:")
-
-    private val panel: JPanel = JPanel(GridBagLayout()).apply {
-        val gbc = GridBagConstraints().apply {
-            anchor = GridBagConstraints.WEST
-            insets = Insets(4, 4, 4, 8)
-        }
-        fun row(r: Int, lbl: String, comp: JComponent) {
-            gbc.gridx = 0; gbc.gridy = r; gbc.fill = GridBagConstraints.NONE; gbc.weightx = 0.0
-            add(JLabel(lbl), gbc)
-            gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0
-            add(comp, gbc)
-        }
-
-        row(0, "Board:",           boardCombo)
-        row(1, "Chip:",            chipCombo)   // conditionally hidden
-        row(2, "CPU frequency:",   freqCombo)
-        row(3, "Stdlib compat:",   stdlibCombo)
-        row(4, "Package manager:", pmCombo)
-
-        gbc.gridx = 0; gbc.gridy = 5; gbc.gridwidth = 2
-        gbc.fill = GridBagConstraints.NONE; gbc.weightx = 0.0
-        add(JLabel(
-            "<html><font color='gray' size='2'>Creates pyproject.toml + src/main.py and runs sync.</font></html>"
-        ), gbc)
+    private companion object {
+        const val BARE_CHIP = "— Bare chip (advanced) —"
+        val FREQUENCIES = listOf(
+            "16 MHz" to 16_000_000L,
+            "8 MHz" to 8_000_000L,
+            "16.5 MHz (Digispark / Trinket)" to 16_500_000L,
+            "125 MHz (RP2040)" to 125_000_000L,
+            "150 MHz (RP2350)" to 150_000_000L,
+            "1 MHz" to 1_000_000L,
+        )
+        val STDLIB_LABELS = arrayOf(
+            "CircuitPython compat  (board, digitalio, busio…)",
+            "MicroPython compat  (machine, utime…)",
+            "None — bare PyMCU (pymcu.hal)",
+        )
+        val STDLIB_VALUES = arrayOf("circuitpython", "micropython", "")
     }
+
+    @Volatile
+    private var catalog: BoardCatalog = PyMcuBoardCatalogService.FALLBACK
+    private var boardValues: List<String?> = emptyList()
+
+    private val boardCombo = ComboBox<String>()
+    private val chipField = JBTextField()
+    private val frequencyCombo = ComboBox(FREQUENCIES.map { it.first }.toTypedArray())
+    private val stdlibCombo = ComboBox(STDLIB_LABELS)
+    private val packageManagerCombo = ComboBox(PyMcuSettings.PACKAGE_MANAGERS)
+
+    private val panel: JPanel = FormBuilder.createFormBuilder()
+        .addLabeledComponent(JBLabel("Board:"), boardCombo, 1, false)
+        .addLabeledComponent(JBLabel("Chip:"), chipField, 1, false)
+        .addLabeledComponent(JBLabel("CPU frequency:"), frequencyCombo, 1, false)
+        .addLabeledComponent(JBLabel("Compat stdlib:"), stdlibCombo, 1, false)
+        .addLabeledComponent(JBLabel("Package manager:"), packageManagerCombo, 1, false)
+        .addComponentToRightColumn(
+            JBLabel("Creates pyproject.toml and a blink starter, then installs dependencies.")
+        )
+        .panel
 
     init {
-        // Show/hide custom chip row based on board selection
-        updateChipRowVisibility()
-        boardCombo.addActionListener { updateChipRowVisibility() }
+        packageManagerCombo.selectedItem = PyMcuSettings.getInstance().packageManager
+        populateBoards(catalog)
+        boardCombo.addItemListener { if (it.stateChange == ItemEvent.SELECTED) onBoardChanged() }
+        onBoardChanged()
+        loadCatalogInBackground()
     }
 
-    private fun updateChipRowVisibility() {
-        val isCustom = boardValues[boardCombo.selectedIndex] == null
-        chipLabel.isVisible  = isCustom
-        chipCombo.isVisible  = isCustom
+    /**
+     * The wizard must not block on a subprocess, so the panel opens with the
+     * built-in fallback list and swaps in the real catalog when it arrives.
+     */
+    private fun loadCatalogInBackground() {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = PyMcuCli.runIn(null, PyMcuCli.executable(null), listOf("boards", "--json"), 30_000)
+            val fetched = if (result.ok) PyMcuBoardCatalogService.parse(result.stdout) else null
+            if (fetched != null) {
+                ApplicationManager.getApplication().invokeLater {
+                    catalog = fetched
+                    val previous = boardValues.getOrNull(boardCombo.selectedIndex)
+                    populateBoards(fetched)
+                    val restored = boardValues.indexOf(previous)
+                    if (restored >= 0) boardCombo.selectedIndex = restored
+                    onBoardChanged()
+                }
+            }
+        }
     }
 
+    private fun populateBoards(catalog: BoardCatalog) {
+        val labels = mutableListOf<String>()
+        val values = mutableListOf<String?>()
+        for ((group, boards) in catalog.groupedBoards()) {
+            for (board in boards) {
+                labels += "${board.name}  ·  ${board.chip}  ($group)"
+                values += board.name
+            }
+        }
+        labels += BARE_CHIP
+        values += null
+
+        boardValues = values
+        boardCombo.removeAllItems()
+        labels.forEach(boardCombo::addItem)
+        if (labels.isNotEmpty()) boardCombo.selectedIndex = 0
+    }
+
+    private fun selectedBoard(): String? = boardValues.getOrNull(boardCombo.selectedIndex)
+
+    private fun onBoardChanged() {
+        val board = selectedBoard()
+        chipField.isEnabled = board == null
+        if (board != null) {
+            chipField.text = catalog.chipOf(board).orEmpty()
+            defaultFrequencyIndex(catalog.chipOf(board))?.let { frequencyCombo.selectedIndex = it }
+        }
+    }
+
+    /** A sensible clock for the chip family, so the default is not wrong out of the box. */
+    private fun defaultFrequencyIndex(chip: String?): Int? = when {
+        chip == null -> null
+        chip == "rp2040" -> FREQUENCIES.indexOfFirst { it.second == 125_000_000L }
+        chip == "rp2350" -> FREQUENCIES.indexOfFirst { it.second == 150_000_000L }
+        chip.startsWith("attiny") -> FREQUENCIES.indexOfFirst { it.second == 8_000_000L }
+        else -> FREQUENCIES.indexOfFirst { it.second == 16_000_000L }
+    }?.takeIf { it >= 0 }
+
+    // ── ProjectGeneratorPeer ─────────────────────────────────────────────────
+
+    /**
+     * Deprecated upstream in favour of the two-argument overload, but it is still
+     * what PyCharm's directory-project wizard calls, so it has to stay.
+     */
+    @Deprecated("Superseded by getComponent(TextFieldWithBrowseButton, Runnable)")
     override fun getComponent(): JComponent = panel
 
     override fun buildUI(settingsStep: SettingsStep) {
@@ -116,19 +145,22 @@ class PyMcuProjectGeneratorPeer : ProjectGeneratorPeer<PyMcuNewProjectSettings> 
     }
 
     override fun getSettings(): PyMcuNewProjectSettings {
-        val boardIdx = boardCombo.selectedIndex
-        val board    = boardValues[boardIdx]
-        val chip     = if (board == null) chipCombo.selectedItem as String else null
+        val board = selectedBoard()
         return PyMcuNewProjectSettings(
-            chip           = chip,
-            board          = board,
-            frequency      = freqValues[freqCombo.selectedIndex],
-            packageManager = pmCombo.selectedItem as String,
-            stdlib         = stdlibValues[stdlibCombo.selectedIndex]
+            board = board,
+            chip = if (board == null) chipField.text.trim().takeIf { it.isNotEmpty() } else null,
+            frequency = FREQUENCIES[frequencyCombo.selectedIndex].second,
+            packageManager = packageManagerCombo.selectedItem as? String ?: "uv",
+            stdlib = STDLIB_VALUES[stdlibCombo.selectedIndex],
         )
     }
 
-    override fun validate(): ValidationInfo? = null
+    override fun validate(): ValidationInfo? {
+        if (selectedBoard() == null && chipField.text.isBlank()) {
+            return ValidationInfo("Pick a board, or type a chip id.", chipField)
+        }
+        return null
+    }
 
     override fun isBackgroundJobRunning(): Boolean = false
 }
