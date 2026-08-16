@@ -1,0 +1,87 @@
+name: Dev build
+
+# Produces an installable .zip for every push to main, so testers can try the
+# plugin on another machine without a Marketplace release and without a JDK.
+#
+# Two ways to get it:
+#   - the "plugin-zip" artifact on the run (needs a GitHub login, expires in 90 days)
+#   - the rolling "dev" prerelease, which always points at the latest main and has
+#     a stable URL:
+#     https://github.com/PyMCU/jetbrains-pymcu/releases/download/dev/jetbrains-pymcu-dev.zip
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: dev-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # gradle.properties pins the daemon JDK to a local Homebrew path; on CI the
+      # JDK that setup-java installed is the right one.
+      - name: Use the runner's JDK
+        run: sed -i '/^org.gradle.java.home/d' gradle.properties
+
+      # Stamp the commit into the version so a tester can report exactly which
+      # build they are on, and so a dev build is never mistaken for a release.
+      - name: Stamp the version
+        id: stamp
+        run: |
+          base=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
+          version="${base}-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
+          sed -i "s/^pluginVersion = .*/pluginVersion = ${version}/" gradle.properties
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Test and verify the plugin descriptor
+        run: ./gradlew test verifyPluginProjectConfiguration --no-daemon
+
+      - run: ./gradlew buildPlugin --no-daemon
+
+      # A stable filename: the rolling release URL must not change per build.
+      - name: Normalise the filename
+        run: |
+          mkdir -p dist
+          cp build/distributions/*.zip dist/jetbrains-pymcu-dev.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zip
+          path: dist/jetbrains-pymcu-dev.zip
+
+      - name: Update the rolling dev prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          name: Dev build (latest main)
+          prerelease: true
+          # The tag moves with main, so the notes must be rewritten each time.
+          body: |
+            Automatic build of `main` — **not a release**.
+
+            - Version: `${{ steps.stamp.outputs.version }}`
+            - Commit: ${{ github.sha }}
+            - Built: ${{ github.event.head_commit.timestamp }}
+
+            **Install:** PyCharm → Settings → Plugins → gear icon →
+            *Install Plugin from Disk…* → pick the `.zip` below → restart.
+
+            Requires PyCharm 2024.3 or newer and the PyMCU CLI
+            (`pipx install pymcu-compiler`).
+          files: dist/jetbrains-pymcu-dev.zip
