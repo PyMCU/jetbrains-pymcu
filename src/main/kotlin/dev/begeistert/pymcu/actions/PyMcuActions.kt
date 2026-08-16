@@ -114,24 +114,30 @@ class PyMcuSyncAction : PyMcuAction("Sync Project", "Install dependencies and re
 
 object PyMcuSyncTask {
 
-    fun launch(project: Project) {
+    fun launch(project: Project, packageManager: String? = null) {
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Syncing PyMCU project", true) {
-            override fun run(indicator: ProgressIndicator) = execute(project, indicator)
+            override fun run(indicator: ProgressIndicator) = execute(project, indicator, packageManager)
         })
     }
 
-    /** Blocking. Safe to call from any background thread. */
-    fun execute(project: Project, indicator: ProgressIndicator?) {
+    /**
+     * Blocking. Safe to call from any background thread.
+     *
+     * [packageManager] overrides both the project's own evidence and the
+     * configured default — the New Project wizard passes what the user just
+     * chose, which nothing on disk can show yet.
+     */
+    fun execute(project: Project, indicator: ProgressIndicator?, packageManager: String? = null) {
         val basePath = project.basePath ?: return
-        val packageManager = PyMcuCli.syncCommand()
+        val command = PyMcuCli.syncCommand(basePath, packageManager)
 
-        indicator?.text = "Installing dependencies (${packageManager.joinToString(" ")})…"
-        val install = PyMcuCli.runIn(basePath, packageManager.first(), packageManager.drop(1), timeoutMs = 300_000)
+        indicator?.text = "Installing dependencies (${command.joinToString(" ")})…"
+        val install = PyMcuCli.runIn(basePath, command.first(), command.drop(1), timeoutMs = 300_000)
         if (!install.started) {
             PyMcuNotifications.warn(
                 project, "PyMCU sync",
-                "Could not run `${packageManager.joinToString(" ")}`. Check the package manager in " +
-                    "Settings | Tools | PyMCU."
+                "Could not run `${command.joinToString(" ")}` — is ${command.first()} installed? " +
+                    "The package manager is set in Settings | Tools | PyMCU."
             )
             return
         }

@@ -4,6 +4,30 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- The New Project wizard collected a package manager and nothing read it, so
+  choosing pip still ran `uv sync`. The choice is now passed to the sync, and
+  every later sync reads the project instead of the application-wide setting: a
+  `poetry.lock` makes it a Poetry project whatever that setting says.
+- `import machine` and the other bare compat imports did not resolve.
+  `AdditionalLibraryRootsProvider` indexes directories but does not make them
+  import roots — Python resolution walks the interpreter's paths and the
+  `Pythonid.importResolver` extension point, so the plugin now implements that.
+  The search order mirrors the compiler's include order, so what the editor
+  resolves to is the file the build compiles.
+- The generated `pyproject.toml` came out indented twelve spaces with the
+  interpolated lines flush left: `trimIndent()` runs after interpolation, and a
+  multi-line `$value` at column 0 drags the common indent to zero. The templates
+  build lines instead, which cannot fail that way, and are covered by tests.
+- Scaffolded dependencies were bare names, which pip refuses for alpha packages
+  because it only considers pre-releases when the specifier names one. They now
+  carry the driver's prerelease floor, and `pymcu-compiler` carries the backend
+  extra for the chip family (`[avr]`, `[arm]`) — without it a fresh install
+  arrives with no backend to build with.
+- The New Project wizard showed the monochrome tool-window glyph as its logo,
+  scaled past the size it was drawn for. It now shows the project's own mark;
+  the mono snake stays where the platform wants one colour.
+
 ### Added
 - **Library manager** in the tool window: browse the index, filter by target, install and remove.
   The compatibility verdict is the driver's measured per-chip build result, with the reason shown

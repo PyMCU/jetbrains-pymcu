@@ -83,6 +83,13 @@
 
     </extensions>
 
+    <!-- Python's import resolution walks the interpreter's paths and this
+         extension point, not the synthetic-library list, so the compat layers
+         need it to make `import machine` resolve. -->
+    <extensions defaultExtensionNs="Pythonid">
+        <importResolver implementation="dev.begeistert.pymcu.resolver.PyMcuImportResolver"/>
+    </extensions>
+
     <actions>
         <action id="PyMcu.Build"
                 class="dev.begeistert.pymcu.actions.PyMcuBuildAction"

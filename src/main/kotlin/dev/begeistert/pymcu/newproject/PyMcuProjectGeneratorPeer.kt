@@ -152,6 +152,9 @@ class PyMcuProjectGeneratorPeer : ProjectGeneratorPeer<PyMcuNewProjectSettings> 
             frequency = FREQUENCIES[frequencyCombo.selectedIndex].second,
             packageManager = packageManagerCombo.selectedItem as? String ?: "uv",
             stdlib = STDLIB_VALUES[stdlibCombo.selectedIndex],
+            // The catalog is only on hand here, and the scaffolding needs the
+            // chip family to pick the compiler's backend extra.
+            resolvedChip = board?.let(catalog::chipOf),
         )
     }
 

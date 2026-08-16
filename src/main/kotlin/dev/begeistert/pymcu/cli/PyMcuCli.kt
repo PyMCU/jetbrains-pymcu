@@ -72,12 +72,52 @@ object PyMcuCli {
     fun isAvailable(project: Project?): Boolean =
         run(project, "--version", timeoutMs = 15_000).started
 
-    /** The command that installs project dependencies with the configured package manager. */
-    fun syncCommand(): List<String> = when (PyMcuSettings.getInstance().packageManager) {
-        "poetry" -> listOf("poetry", "install")
-        "pipenv" -> listOf("pipenv", "install")
-        "pip" -> listOf("pip", "install", "-e", ".")
-        else -> listOf("uv", "sync")
+    /**
+     * The package manager to use for [basePath], as evidenced by the project
+     * itself. Returns null when the project carries no marker.
+     *
+     * WHY look at the project at all: the configured manager is application-wide,
+     * so a single setting decides for every project the IDE opens. A checkout with
+     * a `poetry.lock` is a Poetry project no matter what that setting says, and
+     * running `uv sync` in it creates a second, competing environment.
+     */
+    fun detectPackageManager(basePath: String?): String? {
+        if (basePath == null) return null
+        val root = File(basePath)
+        return when {
+            File(root, "uv.lock").isFile -> "uv"
+            File(root, "poetry.lock").isFile -> "poetry"
+            File(root, "Pipfile").isFile -> "pipenv"
+            File(root, "requirements.txt").isFile -> "pip"
+            // No lock file yet, but the section says who owns the dependencies.
+            File(root, "pyproject.toml").takeIf { it.isFile }
+                ?.readTextOrNull()?.contains("[tool.poetry]") == true -> "poetry"
+            else -> null
+        }
+    }
+
+    /**
+     * The command that installs this project's dependencies.
+     *
+     * [override] wins (the New Project wizard knows what the user just picked),
+     * then what the project itself shows, then the configured default.
+     */
+    fun syncCommand(basePath: String? = null, override: String? = null): List<String> {
+        val manager = override
+            ?: detectPackageManager(basePath)
+            ?: PyMcuSettings.getInstance().packageManager
+        return when (manager) {
+            "poetry" -> listOf("poetry", "install")
+            "pipenv" -> listOf("pipenv", "install")
+            "pip" -> listOf("pip", "install", "-e", ".")
+            else -> listOf("uv", "sync")
+        }
+    }
+
+    private fun File.readTextOrNull(): String? = try {
+        readText()
+    } catch (_: Exception) {
+        null
     }
 
     private val isWindows: Boolean get() = System.getProperty("os.name").startsWith("Windows", true)

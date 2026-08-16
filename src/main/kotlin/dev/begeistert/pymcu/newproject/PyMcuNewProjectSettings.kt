@@ -15,4 +15,15 @@ data class PyMcuNewProjectSettings(
      *  "circuitpython" — board, digitalio, busio, …
      */
     val stdlib: String = "circuitpython",
-)
+    /**
+     * The chip [board] resolves to, from the catalog.
+     *
+     * Carried separately because the scaffolding needs the chip family to pick
+     * the compiler's backend extra, and only the wizard panel has the catalog
+     * on hand to resolve a board alias.
+     */
+    val resolvedChip: String? = null,
+) {
+    /** The chip this project targets, however it was specified. */
+    val effectiveChip: String? get() = chip ?: resolvedChip
+}

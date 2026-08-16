@@ -10,7 +10,22 @@ import javax.swing.Icon
  * light SVG needs naming here.
  */
 object PyMcuIcons {
-    /** 13×13 tool-window and run-configuration icon. */
+
+    /**
+     * The monochrome snake: tool window, run configurations, library nodes.
+     * The platform draws these next to its own glyphs and expects one colour.
+     */
     @JvmField
     val PyMcu: Icon = IconLoader.getIcon("/icons/pymcu.svg", PyMcuIcons::class.java)
+
+    /**
+     * The full-colour project logo, for the places that present a brand rather
+     * than a glyph — currently the New Project wizard.
+     *
+     * These are deliberately two icons. Using the mono glyph as the wizard logo
+     * put a small grey squiggle where every other entry shows a recognisable
+     * product mark, and scaled it past the size it was drawn for.
+     */
+    @JvmField
+    val Logo: Icon = IconLoader.getIcon("/icons/pymcuLogo.svg", PyMcuIcons::class.java)
 }
