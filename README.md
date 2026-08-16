@@ -53,6 +53,7 @@ All under **Tools | PyMCU**, and on the PyMCU tool window's toolbar.
 | Lint Project (Porting Assistant) | `pymcu lint` over the configured sources |
 | Sync Project | dependency install, then `pymcu sync` and `pymcu stubs` |
 | Export Type Stubs… | `pymcu stubs`, for type checkers outside the IDE |
+| Serial Monitor | a console on the board's UART, at the project's `stdout_baud` |
 | Configure Project… | the board / flash configuration dialog |
 
 The tool window has three tabs: **Get Started** (setup checklist), **Libraries** (install and

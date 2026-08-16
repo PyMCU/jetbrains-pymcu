@@ -5,6 +5,18 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 ## [Unreleased]
 
 ### Added
+- **The project interpreter is set to the project's own virtualenv.** The plugin
+  contributes a plain `DirectoryProjectGenerator`, which unlike PyCharm's
+  `PythonProjectGenerator` has no interpreter step, so a project created by the
+  wizard had no SDK at all — and without one PyCharm resolves nothing, not the
+  compat layers, not `pymcu.*`, not the standard library. Sync now fills that gap.
+  It only ever fills it: an interpreter the user chose is left alone, and a
+  dangling one (venv deleted and recreated) is replaced.
+- **Serial monitor.** A PyMCU program's `print()` goes out of a UART, and the
+  plugin already knew the device and speed from `stdout` / `stdout_baud` without
+  having anywhere to put them. Tools | PyMCU | Serial Monitor opens a console on
+  the board, reusing the pinned flash port or asking which one. Not supported on
+  Windows, where it says so rather than half-working.
 - **The New Project wizard was redesigned.** Board picker with the catalog's own
   group headings and speed search instead of a flat 40-entry list; a line under
   the chip saying what it actually is (`AVR · avr toolchain · flashed with

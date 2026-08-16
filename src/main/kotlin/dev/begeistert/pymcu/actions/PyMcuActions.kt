@@ -19,6 +19,7 @@ import dev.begeistert.pymcu.lint.PyMcuLintRunner
 import dev.begeistert.pymcu.notifications.PyMcuNotifications
 import dev.begeistert.pymcu.project.PyMcuProjectService
 import dev.begeistert.pymcu.run.PyMcuTaskRunner
+import dev.begeistert.pymcu.venv.PyMcuInterpreter
 import javax.swing.Icon
 
 /**
@@ -147,6 +148,12 @@ object PyMcuSyncTask {
 
         indicator?.text = "Generating board module (pymcu sync)…"
         PyMcuCli.run(project, "sync", timeoutMs = 120_000)
+
+        // Before refreshing indexes: without an interpreter there is nothing for
+        // the index to resolve against, and the wizard's generator cannot set one
+        // because a plain DirectoryProjectGenerator has no interpreter step.
+        indicator?.text = "Setting the project interpreter…"
+        PyMcuInterpreter.configureIfNeeded(project)
 
         indicator?.text = "Refreshing indexes…"
         refreshGeneratedRoots(project, basePath)

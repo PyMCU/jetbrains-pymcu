@@ -111,6 +111,10 @@
         <action id="PyMcu.BuildExplain"
                 class="dev.begeistert.pymcu.actions.PyMcuBuildExplainAction"
                 text="Build and Explain" description="Compile and report the setup injected implicitly"/>
+        <action id="PyMcu.Monitor"
+                class="dev.begeistert.pymcu.monitor.PyMcuSerialMonitorAction"
+                text="Serial Monitor"
+                description="Read what the firmware prints over UART"/>
         <action id="PyMcu.Sync"
                 class="dev.begeistert.pymcu.actions.PyMcuSyncAction"
                 text="Sync Project" description="Install dependencies and regenerate IDE support files"/>
@@ -133,6 +137,7 @@
             <reference ref="PyMcu.Build"/>
             <reference ref="PyMcu.Flash"/>
             <reference ref="PyMcu.Clean"/>
+            <reference ref="PyMcu.Monitor"/>
             <separator/>
             <reference ref="PyMcu.BuildExplain"/>
             <reference ref="PyMcu.Lint"/>
@@ -147,6 +152,7 @@
             <reference ref="PyMcu.Build"/>
             <reference ref="PyMcu.Flash"/>
             <reference ref="PyMcu.Clean"/>
+            <reference ref="PyMcu.Monitor"/>
             <separator/>
             <reference ref="PyMcu.Lint"/>
             <reference ref="PyMcu.Sync"/>
