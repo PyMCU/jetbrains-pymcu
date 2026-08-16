@@ -1,0 +1,76 @@
+<templateSet group="PyMCU">
+  <!-- Ported from the VS Code extension's snippets so the two offer the same
+       starting points. Available in Python files. -->
+
+  <template name="pymcu-blink-mp"
+            value="from machine import Pin&#10;from time import sleep_ms&#10;&#10;led = Pin($PIN$, Pin.OUT)&#10;&#10;while True:&#10;    led.value(1)&#10;    sleep_ms($MS$)&#10;    led.value(0)&#10;    sleep_ms($MS$)&#10;$END$"
+            description="LED blink using the MicroPython compat layer"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="PIN" expression="" defaultValue="&quot;13&quot;" alwaysStopAt="true"/>
+    <variable name="MS" expression="" defaultValue="&quot;500&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-blink-cp"
+            value="import board&#10;import digitalio&#10;import time&#10;&#10;led = digitalio.DigitalInOut(board.$PIN$)&#10;led.direction = digitalio.Direction.OUTPUT&#10;&#10;while True:&#10;    led.value = True&#10;    time.sleep($SECONDS$)&#10;    led.value = False&#10;    time.sleep($SECONDS$)&#10;$END$"
+            description="LED blink using the CircuitPython compat layer"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="PIN" expression="" defaultValue="&quot;LED&quot;" alwaysStopAt="true"/>
+    <variable name="SECONDS" expression="" defaultValue="&quot;0.5&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-blink-avr"
+            value="from pymcu.chips.$CHIP$ import DDRB, PORTB, DDB5, PORTB5&#10;from pymcu.time import delay_ms&#10;&#10;&#10;def main():&#10;    DDRB[DDB5] = 1&#10;    while True:&#10;        PORTB[PORTB5] = 1&#10;        delay_ms($MS$)&#10;        PORTB[PORTB5] = 0&#10;        delay_ms($MS$)&#10;$END$"
+            description="LED blink writing AVR registers directly"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="CHIP" expression="" defaultValue="&quot;atmega328p&quot;" alwaysStopAt="true"/>
+    <variable name="MS" expression="" defaultValue="&quot;500&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-uart-mp"
+            value="from machine import UART&#10;&#10;uart = UART($ID$, $BAUD$)&#10;&#10;while True:&#10;    if uart.any():&#10;        uart.write(uart.read(1))&#10;$END$"
+            description="UART setup and echo loop using machine.UART"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="ID" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <variable name="BAUD" expression="" defaultValue="&quot;115200&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-pwm-mp"
+            value="from machine import Pin, PWM&#10;&#10;pwm = PWM(Pin($PIN$))&#10;pwm.freq($FREQ$)&#10;pwm.duty_u16($DUTY$)&#10;$END$"
+            description="PWM output using machine.PWM"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="PIN" expression="" defaultValue="&quot;9&quot;" alwaysStopAt="true"/>
+    <variable name="FREQ" expression="" defaultValue="&quot;1000&quot;" alwaysStopAt="true"/>
+    <variable name="DUTY" expression="" defaultValue="&quot;32768&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-adc-mp"
+            value="from machine import ADC&#10;&#10;adc = ADC($CHANNEL$)&#10;&#10;while True:&#10;    value = adc.read_u16()&#10;    $END$"
+            description="Analog read using machine.ADC"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="CHANNEL" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-async"
+            value="import asyncio&#10;&#10;&#10;async def $NAME$():&#10;    while True:&#10;        $END$&#10;        await asyncio.sleep_ms($MS$)&#10;"
+            description="async def compiled to a native state machine"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;worker&quot;" alwaysStopAt="true"/>
+    <variable name="MS" expression="" defaultValue="&quot;100&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+
+  <template name="pymcu-isr"
+            value="from pymcu.interrupts import interrupt&#10;&#10;&#10;@interrupt($VECTOR$)&#10;def $NAME$():&#10;    $END$&#10;"
+            description="Interrupt service routine bound to a vector"
+            toReformat="false" toShortenFQNames="false">
+    <variable name="VECTOR" expression="" defaultValue="&quot;&quot;TIMER1_COMPA&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="NAME" expression="" defaultValue="&quot;on_timer&quot;" alwaysStopAt="true"/>
+    <context><option name="Python" value="true"/></context>
+  </template>
+</templateSet>

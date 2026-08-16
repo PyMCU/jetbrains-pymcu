@@ -1,0 +1,8 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- PyMCU: the coiled snake of the project logo, reduced to the monochrome
+       silhouette the platform requires at tool-window size. -->
+  <path d="M13.1 13.1C9.6 13.4 3.3 13.1 3.3 10.1C3.3 7.3 11.3 8.0 11.3 5.3C11.3 3.4 9.0 2.7 7.2 3.3"
+        stroke="#AFB1B3" stroke-width="2" stroke-linecap="round"/>
+  <ellipse cx="5.6" cy="4.0" rx="2.3" ry="1.85" transform="rotate(-20 5.6 4.0)" fill="#AFB1B3"/>
+  <path d="M3.5 4.7L1.7 5.5M3.5 4.7L1.9 3.6" stroke="#AFB1B3" stroke-width="1" stroke-linecap="round"/>
+</svg>
