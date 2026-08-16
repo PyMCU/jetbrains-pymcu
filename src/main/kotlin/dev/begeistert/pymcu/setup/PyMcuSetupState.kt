@@ -77,7 +77,12 @@ object PyMcuSetupState {
         val flavor = config?.flavor
         val compatInstalled = flavor == null ||
             sitePackages?.resolve("pymcu_$flavor")?.toFile()?.isDirectory == true
-        val depsReady = sitePackages != null && compatInstalled
+        // `pymcu` itself, not just the compat layer: for a native-HAL project
+        // there is no flavor to look for, so checking only that left the step
+        // green for an empty virtualenv, and the first build then failed on a
+        // missing toolchain with the checklist still saying everything was fine.
+        val stdlibInstalled = sitePackages?.resolve("pymcu")?.toFile()?.isDirectory == true
+        val depsReady = sitePackages != null && compatInstalled && stdlibInstalled
         steps += SetupStep(
             id = "deps",
             title = "Install dependencies",
@@ -88,6 +93,7 @@ object PyMcuSetupState {
             },
             detail = when {
                 sitePackages == null -> "No virtualenv found in this project."
+                !stdlibInstalled -> "`pymcu-stdlib` is not installed in the project virtualenv."
                 !compatInstalled -> "`pymcu-$flavor` is not installed in the project virtualenv."
                 else -> "Virtualenv ready at ${sitePackages.parent.parent.parent.fileName}/."
             },
@@ -102,17 +108,21 @@ object PyMcuSetupState {
             status = when {
                 blocked -> StepStatus.BLOCKED
                 boardModule -> StepStatus.DONE
-                // Only CircuitPython-style code imports `board`; for the rest
-                // there is nothing to generate and nothing to warn about.
-                flavor != "circuitpython" -> StepStatus.DONE
+                // The build generates the shim whenever `board` is set, whatever
+                // the flavor — `import board` is legal in a MicroPython project
+                // too. With no board there is nothing to generate.
+                config?.board == null -> StepStatus.DONE
                 else -> StepStatus.PENDING
             },
             detail = when {
                 boardModule -> "dist/_generated/board.py matches the configured board."
-                flavor != "circuitpython" -> "Not needed: only `import board` uses it."
+                config?.board == null -> "Not needed: no board is set, so there is none to generate."
+                // `pymcu sync` needs a compat flavor and does nothing without one,
+                // so for a native-HAL project only a build can produce the shim.
+                flavor == null -> "Missing — a build will generate it."
                 else -> "Missing — `import board` will not resolve until you sync."
             },
-            actionLabel = "Sync Project",
+            actionLabel = if (config?.board != null && flavor == null) "Build" else "Sync Project",
         )
 
         // ── 5. the first build ───────────────────────────────────────────────

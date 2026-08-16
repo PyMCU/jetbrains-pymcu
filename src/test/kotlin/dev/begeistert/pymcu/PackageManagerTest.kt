@@ -50,6 +50,31 @@ class PackageManagerTest {
         assertEquals("pip", PyMcuCli.syncCommand(base, "pip").first())
     }
 
+    /**
+     * The regression: detection answers "pip" *because* requirements.txt exists,
+     * and `pip install -e .` reads only `[project].dependencies`. On a project
+     * whose dependencies live in requirements.txt that installs the project, no
+     * dependencies, and exits 0 — so the sync reported success having installed
+     * nothing.
+     */
+    @Test
+    fun `a pip project with requirements txt installs from it`() {
+        val base = project(
+            "pyproject.toml" to "[tool.pymcu]\nboard = \"arduino_uno\"\n",
+            "requirements.txt" to "pymcu-stdlib\n",
+        )
+        assertEquals(listOf("pip", "install", "-r", "requirements.txt"), PyMcuCli.syncCommand(base))
+        // Also when the wizard passes the choice explicitly.
+        assertEquals(listOf("pip", "install", "-r", "requirements.txt"), PyMcuCli.syncCommand(base, "pip"))
+    }
+
+    /** Without one, the project's own metadata is the only place deps can be. */
+    @Test
+    fun `a pip project without requirements txt installs the project itself`() {
+        val base = project("pyproject.toml" to "[project]\nname = \"x\"\ndependencies = [\"pymcu-stdlib\"]\n")
+        assertEquals(listOf("pip", "install", "-e", "."), PyMcuCli.syncCommand(base, "pip"))
+    }
+
     // ── detection from the project ───────────────────────────────────────────
 
     @Test
@@ -68,7 +93,7 @@ class PackageManagerTest {
             "requirements.txt" to "pymcu-stdlib\npymcu-compiler\n",
         )
         assertEquals("pip", PyMcuCli.detectPackageManager(base))
-        assertEquals(listOf("pip", "install", "-e", "."), PyMcuCli.syncCommand(base))
+        assertEquals(listOf("pip", "install", "-r", "requirements.txt"), PyMcuCli.syncCommand(base))
     }
 
     @Test

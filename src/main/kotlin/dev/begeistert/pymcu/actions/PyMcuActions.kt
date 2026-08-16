@@ -238,7 +238,11 @@ class PyMcuExportStubsAction : PyMcuAction(
     }
 
     private companion object {
-        /** Under dist/, so it is already gitignored and never indexed. */
+        /**
+         * Under dist/, so it is already gitignored and never indexed — but also
+         * inside what `pymcu clean` deletes, so a type checker in CI pointed here
+         * needs the export re-run after a clean.
+         */
         const val STUBS_DIR = "dist/_generated/stubs"
     }
 }

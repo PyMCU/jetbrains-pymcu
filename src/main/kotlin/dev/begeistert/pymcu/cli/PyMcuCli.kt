@@ -176,7 +176,17 @@ object PyMcuCli {
         return when (manager) {
             "poetry" -> listOf("poetry", "install")
             "pipenv" -> listOf("pipenv", "install")
-            "pip" -> listOf("pip", "install", "-e", ".")
+            // `pip install -e .` reads [project].dependencies and nothing else, so
+            // on a project whose dependencies live in requirements.txt — which is
+            // exactly what made detectPackageManager answer "pip" — it installs the
+            // project itself, no dependencies, and exits 0. The sync then reports
+            // success while nothing was installed. The driver's own Makefile uses
+            // -r for this case; so does this.
+            "pip" -> if (basePath != null && File(basePath, "requirements.txt").isFile) {
+                listOf("pip", "install", "-r", "requirements.txt")
+            } else {
+                listOf("pip", "install", "-e", ".")
+            }
             else -> listOf("uv", "sync")
         }
     }

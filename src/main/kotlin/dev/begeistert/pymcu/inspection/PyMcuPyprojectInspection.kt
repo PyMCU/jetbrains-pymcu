@@ -23,9 +23,12 @@ private const val SECTION = "tool.pymcu"
  * offers the edit that fixes each.
  *
  * The conditions are the driver's, not the plugin's: `build.py` refuses a
- * `board` and a `target` together, warns on the deprecated `chip` key, and
- * cannot do anything without one of the three. Catching them in the editor
- * turns a failed build into a squiggle.
+ * `board` and a `target` together and warns on the deprecated `chip` key.
+ * Catching those in the editor turns a failed build into a squiggle.
+ *
+ * The missing-target case is the opposite: the build does not fail, it falls
+ * back to `pic16f84a` at 4 MHz and produces firmware for a chip nobody asked
+ * for. That is worth an error precisely because nothing else reports it.
  *
  * WHY it works on raw text rather than TOML PSI: `org.toml.lang` is bundled in
  * PyCharm but is not guaranteed present in every IDE this plugin runs in, and an
@@ -85,10 +88,23 @@ class PyMcuPyprojectInspection : LocalInspectionTool() {
             )
         }
 
+        // build.py exits 1 on this: "The layers are not interoperable". The
+        // plugin used to just take the first and display it as if it were fine.
+        if (config.stdlib.count { it == "micropython" || it == "circuitpython" } > 1) {
+            report(
+                TomlWriter.keyRange(text, SECTION, "stdlib"),
+                "MicroPython and CircuitPython cannot both be enabled — the build refuses them.",
+                error = true,
+                KeepOneFlavorFix("circuitpython"),
+                KeepOneFlavorFix("micropython"),
+            )
+        }
+
         if (config.hasNoTarget) {
             report(
                 null,
-                "No target: set `board = \"…\"` for a known board, or `target = \"…\"` for a bare chip.",
+                "No target — the build will silently produce firmware for pic16f84a. " +
+                    "Set `board = \"…\"` for a known board, or `target = \"…\"` for a bare chip.",
                 error = true,
                 OpenConfigureDialogFix(),
             )
@@ -142,6 +158,13 @@ private class RenameKeyFix(private val from: String, private val to: String) :
     PyprojectFix("Rename `$from` to `$to`") {
     override fun rewrite(content: String): String =
         TomlWriter.renameKey(content, SECTION, from, to)
+}
+
+/** Rewrites `stdlib` down to the single flavor the build will accept. */
+private class KeepOneFlavorFix(private val flavor: String) :
+    PyprojectFix("Keep $flavor only") {
+    override fun rewrite(content: String): String =
+        TomlWriter.setKey(content, SECTION, "stdlib", "[${TomlWriter.quote(flavor)}]")
 }
 
 private class RemoveKeyFix(private val key: String, label: String) : PyprojectFix(label) {

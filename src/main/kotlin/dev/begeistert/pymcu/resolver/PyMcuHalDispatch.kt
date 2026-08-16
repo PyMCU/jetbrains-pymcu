@@ -15,9 +15,8 @@ package dev.begeistert.pymcu.resolver
  *
  * The compiler evaluates that against the target and keeps one branch. An IDE
  * cannot, so `Pin` resolves to all six, and Go To Declaration offers a list of
- * architectures the project will never compile for. Nine facades dispatch this
- * way — gpio, adc, pwm, uart, timer, i2c, spi, console and dma — so it is the
- * whole HAL surface, not one class.
+ * architectures the project will never compile for. Every HAL facade dispatches
+ * this way, so it is the whole surface and not one class.
  *
  * This decides, from the target, which directories are live. It is deliberately
  * conservative: a directory is demoted only when it is positively known to

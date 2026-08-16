@@ -23,6 +23,7 @@ import dev.begeistert.pymcu.PyMcuIcons
 import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
 import dev.begeistert.pymcu.config.PyMcuConfig
 import dev.begeistert.pymcu.lint.LintFinding
+import dev.begeistert.pymcu.newproject.PyMcuClock
 import dev.begeistert.pymcu.lint.LintReport
 import dev.begeistert.pymcu.lint.PyMcuLintResults
 import dev.begeistert.pymcu.lint.PyMcuLintResultsListener
@@ -148,18 +149,11 @@ internal class PyMcuToolWindowPanel(private val project: Project) : JPanel(Borde
             else -> "no target set"
         }
         config.architecture(chip)?.let { parts += it }
-        config.frequency?.let { parts += formatFrequency(it) }
+        config.frequency?.let { parts += PyMcuClock.format(it) }
         config.flavor?.let { parts += "$it compat" }
         if (config.hasFfi) parts += "C/C++ FFI"
 
         return parts.joinToString("  ·  ")
-    }
-
-    /** 16000000 → "16 MHz", 16500000 → "16.5 MHz", 32768 → "32768 Hz". */
-    private fun formatFrequency(hz: Long): String {
-        if (hz < 1_000_000) return "$hz Hz"
-        val mhz = hz / 1_000_000.0
-        return if (mhz == Math.floor(mhz)) "${mhz.toLong()} MHz" else "$mhz MHz"
     }
 
     // ── findings ─────────────────────────────────────────────────────────────

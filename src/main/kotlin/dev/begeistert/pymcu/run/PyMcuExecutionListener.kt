@@ -39,7 +39,10 @@ class PyMcuExecutionListener(private val project: Project) : ExecutionListener {
 
         when (configuration.command) {
             "build" -> onBuildFinished(exitCode)
-            "sync", "stubs" -> if (exitCode == 0) PyMcuLibraryRootsRefresher.refresh(project)
+            // clean rmtree's dist/, taking dist/_generated with it — and that is a
+            // registered library root, so without this the IDE keeps resolving
+            // `import board` against a directory that no longer exists.
+            "sync", "stubs", "clean" -> if (exitCode == 0) PyMcuLibraryRootsRefresher.refresh(project)
             "flash" -> if (exitCode != 0) {
                 PyMcuNotifications.warn(
                     project, "PyMCU flash failed",

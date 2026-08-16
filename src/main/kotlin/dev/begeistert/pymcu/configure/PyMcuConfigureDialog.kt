@@ -21,6 +21,7 @@ import dev.begeistert.pymcu.cli.SerialPorts
 import dev.begeistert.pymcu.config.PyMcuConfig
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.config.TomlWriter
+import dev.begeistert.pymcu.newproject.PyMcuClock
 import dev.begeistert.pymcu.newproject.PyMcuTargets
 import dev.begeistert.pymcu.notifications.PyMcuNotifications
 import dev.begeistert.pymcu.project.PyMcuProjectService
@@ -124,7 +125,14 @@ class PyMcuConfigureDialog private constructor(
         val boardIndex = boardEntries.indexOfFirst { it.second == config.board }
         boardCombo.selectedIndex = if (boardIndex >= 0) boardIndex else 0
         config.explicitChip?.let { chipCombo.selectedItem = it }
-        frequencyField.text = (config.frequency ?: 16_000_000L).toString()
+        // Not a constant: with no `frequency` key the build uses 4 MHz, so
+        // pre-filling 16 and pressing Save silently quadrupled the clock of a
+        // project the user opened this dialog for some unrelated reason. The
+        // wizard's function gives what the driver's own scaffolder would have
+        // chosen for this target, which beats either hardcoded number.
+        frequencyField.text = (config.frequency
+            ?: PyMcuClock.forTarget(config.board, config.explicitChip ?: catalog.chipOf(config.board.orEmpty())))
+            .toString()
         stdlibCombo.selectedIndex = stdlibValues.indexOf(config.flavor ?: "").coerceAtLeast(0)
         programmerCombo.selectedItem = config.flash.programmer ?: AUTO_PROGRAMMER
         portField.text = config.flash.port.orEmpty()

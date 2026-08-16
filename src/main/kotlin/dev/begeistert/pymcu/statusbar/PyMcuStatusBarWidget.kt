@@ -10,6 +10,7 @@ import com.intellij.util.Consumer
 import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
 import dev.begeistert.pymcu.config.PyMcuConfig
 import dev.begeistert.pymcu.configure.PyMcuConfigureDialog
+import dev.begeistert.pymcu.newproject.PyMcuClock
 import dev.begeistert.pymcu.project.PyMcuConfigListener
 import dev.begeistert.pymcu.project.PyMcuProjectService
 import java.awt.event.MouseEvent
@@ -62,7 +63,7 @@ class PyMcuStatusBarWidget(private val project: Project) :
         return buildString {
             append("PyMCU target: ")
             append(config.board?.let { board -> chip?.let { "$board ($it)" } ?: board } ?: chip ?: "not set")
-            config.frequency?.let { append(" @ $it Hz") }
+            config.frequency?.let { append(" @ ${PyMcuClock.format(it)}") }
             config.flavor?.let { append(" · $it compat") }
             config.flash.port?.let { append(" · port $it") }
             if (config.hasFfi) append(" · C/C++ FFI")

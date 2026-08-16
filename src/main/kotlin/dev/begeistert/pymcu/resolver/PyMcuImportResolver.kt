@@ -37,8 +37,13 @@ import java.nio.file.Path
  *
  * The search order mirrors the compiler's include order, so what the editor
  * shows is the file the build compiles:
- *   1. `<site-packages>/pymcu_<flavor>` — the compat layer's implementation
- *   2. `dist/_generated`                — the generated `board` module
+ *   1. `dist/_generated`                — the generated `board` module
+ *   2. `<site-packages>/pymcu_<flavor>` — the compat layer's implementation
+ *
+ * The generated directory goes first because that is what `build.py` does —
+ * `extra_includes.insert(0, generated_dir)`, so the board shim wins. No module
+ * currently exists in both roots, so the order has never mattered; it is set
+ * this way so that it keeps not mattering.
  */
 class PyMcuImportResolver : PyImportResolver {
 
@@ -65,15 +70,15 @@ class PyMcuImportResolver : PyImportResolver {
     private fun searchRoots(basePath: String, flavors: List<String>): List<Path> {
         val sitePackages = PyMcuVenv.sitePackages(basePath)
         return buildList {
+            add(Path.of(basePath, "dist", "_generated"))
             if (sitePackages != null) {
                 for (flavor in flavors) add(sitePackages.resolve("pymcu_$flavor"))
             }
-            add(Path.of(basePath, "dist", "_generated"))
         }
     }
 
     /**
-     * `a.b.c` under [roots] as `a/b/c.pyi`, `a/b/c.py`, or the package directory
+     * `a.b.c` under [roots] as `a/b/c.py`, `a/b/c.pyi`, or the package directory
      * `a/b/c` when it has an `__init__`.
      *
      * findFileByNioFile, not refreshAndFind: resolution runs under a read action,

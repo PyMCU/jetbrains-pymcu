@@ -4,6 +4,37 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Fixed (from a plugin/driver divergence audit)
+- **Sync installed nothing on a requirements.txt project.** Detection answered
+  "pip" *because* `requirements.txt` was there, then ran `pip install -e .`,
+  which reads only `[project].dependencies` — installing the project, no
+  dependencies, and exiting 0, so the sync reported success. Reproduced: zero
+  packages before, six after. It now uses `-r requirements.txt`, as the driver's
+  own Makefile does.
+- **The configuration dialog silently quadrupled the clock.** With no
+  `frequency` key the build uses 4 MHz; the dialog pre-filled 16 MHz, so opening
+  it for something unrelated and pressing Save rewrote every delay and UART
+  divisor in the project. It now pre-fills what the driver's scaffolder would
+  have chosen for the target.
+- **Clean left a library root pointing at a deleted directory.** `pymcu clean`
+  removes `dist/`, `_generated` with it, and nothing re-indexed until something
+  unrelated triggered a rescan.
+- **"Install dependencies" went green for an empty virtualenv** on native-HAL
+  projects, where there is no compat layer to look for. It now also requires
+  `pymcu` itself.
+- The board-module step claimed `import board` was CircuitPython-only; the build
+  generates the shim whenever `board` is set. For a native-HAL project the step
+  now offers Build, since `pymcu sync` cannot produce it without a compat layer.
+- The missing-target inspection said the build could not proceed. It can: it
+  falls back to `pic16f84a` at 4 MHz. The message now says so.
+- `stdlib = ["micropython", "circuitpython"]` is a hard error in the driver and
+  the plugin ignored it, displaying the first. Now flagged, with a fix per layer.
+- The import resolver searched the compat layers before `dist/_generated`; the
+  compiler prepends the generated directory. Harmless today because no module
+  exists in both, which is what the driver's ordering exists to keep true.
+- Frequencies were rendered three different ways; all three now use the tested
+  formatter.
+
 ### Added
 - **The project interpreter is set to the project's own virtualenv.** The plugin
   contributes a plain `DirectoryProjectGenerator`, which unlike PyCharm's
