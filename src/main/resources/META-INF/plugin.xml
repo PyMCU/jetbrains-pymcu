@@ -116,10 +116,10 @@
                 class="dev.begeistert.pymcu.actions.PyMcuConfigureAction"
                 text="Configure Project..."
                 description="Board, clock, compat stdlib, programmer, port and fuses"/>
-        <action id="PyMcu.RegenerateStubs"
-                class="dev.begeistert.pymcu.actions.PyMcuRegenerateStubsAction"
-                text="Regenerate IDE Stubs"
-                description="Run pymcu stubs and re-index the generated .pyi tree"/>
+        <action id="PyMcu.ExportStubs"
+                class="dev.begeistert.pymcu.actions.PyMcuExportStubsAction"
+                text="Export Type Stubs..."
+                description="Run pymcu stubs for type checkers outside the IDE"/>
 
         <!-- Tools | PyMCU -->
         <group id="PyMcu.ToolsMenu" text="PyMCU" popup="true">
@@ -132,7 +132,7 @@
             <reference ref="PyMcu.Lint"/>
             <separator/>
             <reference ref="PyMcu.Sync"/>
-            <reference ref="PyMcu.RegenerateStubs"/>
+            <reference ref="PyMcu.ExportStubs"/>
             <reference ref="PyMcu.Configure"/>
         </group>
 

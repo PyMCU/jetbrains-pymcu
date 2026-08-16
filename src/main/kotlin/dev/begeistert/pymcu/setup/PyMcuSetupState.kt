@@ -1,7 +1,6 @@
 package dev.begeistert.pymcu.setup
 
 import com.intellij.openapi.project.Project
-import dev.begeistert.pymcu.actions.PyMcuSyncTask
 import dev.begeistert.pymcu.cli.PyMcuCli
 import dev.begeistert.pymcu.project.PyMcuProjectService
 import dev.begeistert.pymcu.venv.PyMcuVenv
@@ -95,21 +94,23 @@ object PyMcuSetupState {
             actionLabel = "Sync Project",
         )
 
-        // ── 4. generated IDE support ─────────────────────────────────────────
-        val generated = basePath?.let { File(it, "dist/_generated") }?.isDirectory == true
-        val stubs = basePath?.let { File(it, PyMcuSyncTask.STUBS_DIR) }?.isDirectory == true
+        // ── 4. the generated board module ────────────────────────────────────
+        val boardModule = basePath?.let { File(it, "dist/_generated/board.py") }?.isFile == true
         steps += SetupStep(
             id = "generated",
-            title = "Generate IDE support files",
+            title = "Generate the board module",
             status = when {
                 blocked -> StepStatus.BLOCKED
-                generated && stubs -> StepStatus.DONE
+                boardModule -> StepStatus.DONE
+                // Only CircuitPython-style code imports `board`; for the rest
+                // there is nothing to generate and nothing to warn about.
+                flavor != "circuitpython" -> StepStatus.DONE
                 else -> StepStatus.PENDING
             },
             detail = when {
-                generated && stubs -> "Board module and typed stubs are in dist/_generated."
-                generated -> "Board module present; typed stubs missing, so completions are untyped."
-                else -> "Missing — `import board` and the compat imports will not resolve."
+                boardModule -> "dist/_generated/board.py matches the configured board."
+                flavor != "circuitpython" -> "Not needed: only `import board` uses it."
+                else -> "Missing — `import board` will not resolve until you sync."
             },
             actionLabel = "Sync Project",
         )

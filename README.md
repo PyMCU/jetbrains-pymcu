@@ -15,8 +15,9 @@ sources and the language subset comes from the driver, so the two never drift.
   each with a concrete rewrite, plus a navigable list in the PyMCU tool window. Paste MicroPython
   code and follow the squiggles until it compiles.
 - **Resolution and completion** for `pymcu.*`, the MicroPython / CircuitPython compat layers
-  (`machine`, `board`, `digitalio`, …) and the generated `board` module for your target. Typed
-  signatures come from `pymcu stubs`, so they track the installed stdlib.
+  (`machine`, `board`, `digitalio`, …) and the generated `board` module for your target —
+  **always to the source**, never to a stub. Ctrl-click `pin.value(1)` and you land on the code
+  that toggles the register, not on `def value(...) -> int: ...`.
 - **Project configuration dialog** — board, clock, compat stdlib, programmer, serial port and AVR
   fuses, written back to `[tool.pymcu]` without disturbing your comments or formatting. The board
   list comes from `pymcu boards --json`, so it matches whatever backends you have installed.
@@ -50,7 +51,7 @@ All under **Tools | PyMCU**, and on the PyMCU tool window's toolbar.
 | Build and Explain | `pymcu build --explain` — reports the setup the compiler injected implicitly |
 | Lint Project (Porting Assistant) | `pymcu lint` over the configured sources |
 | Sync Project | dependency install, then `pymcu sync` and `pymcu stubs` |
-| Regenerate IDE Stubs | `pymcu stubs` alone |
+| Export Type Stubs… | `pymcu stubs`, for type checkers outside the IDE |
 | Configure Project… | the board / flash configuration dialog |
 
 The tool window has three tabs: **Get Started** (setup checklist), **Libraries** (install and
@@ -119,8 +120,25 @@ the affected panel says so and the rest keeps working.
 |---|---|
 | Board catalog | `pymcu boards --json` |
 | Porting assistant | `pymcu lint --json` |
-| Typed completions | `pymcu stubs` |
 | Library manager | `pymcu libraries --json`, `pymcu search --json` |
+
+## Reading the stdlib
+
+PyMCU's claim is that the abstraction is free — `pin.value(1)` compiles to the same `SBI` a C
+programmer would write by hand. That claim is only checkable if you can read the code, so the
+plugin never resolves to a generated stub:
+
+- **Go to declaration** on anything from `machine`, `digitalio` or `board` opens the real
+  implementation, comments and `@inline` decorators included.
+- The sync does **not** generate `.pyi` files. An earlier version did, and it made the stdlib a
+  black box for a little tidiness in the type hints — a bad trade for this project.
+- Types are not lost by it: annotations reference `pymcu.types`, an installed package the
+  interpreter resolves on its own, so `uint8` reads as `uint8` rather than as a stubbed `int`.
+- **Build and Explain** (`pymcu build --explain`) is the other half: it reports the setup the
+  compiler injected implicitly — clock init, stdout UART, ISR vectors.
+
+**Export Type Stubs…** still exists for mypy or pyright running outside the IDE. The editor
+ignores what it writes.
 
 ## Relationship to the VS Code extension
 

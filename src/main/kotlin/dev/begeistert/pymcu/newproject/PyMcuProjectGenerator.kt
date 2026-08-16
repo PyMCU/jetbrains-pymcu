@@ -20,8 +20,8 @@ import javax.swing.Icon
  * Adds "PyMCU" to the New Project wizard.
  *
  * Scaffolds `pyproject.toml` and a blink starter for the chosen board, then
- * runs the same sync path as the Sync action — dependencies, generated board
- * module and IDE stubs — under a visible progress indicator.
+ * runs the same sync path as the Sync action — dependencies and the generated
+ * board module — under a visible progress indicator.
  */
 class PyMcuProjectGenerator : DirectoryProjectGenerator<PyMcuNewProjectSettings> {
 

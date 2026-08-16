@@ -4,6 +4,17 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **Resolution lands on source, never on a generated stub.** Go to declaration on `pin.value(1)`
+  now opens the implementation — the sentinel-255 trick, the `@inline`, the register write —
+  instead of `def value(self, x: int = 255) -> int: ...`. Reading down to the hardware is most of
+  why this compiler is interesting, and the stub tree was hiding it for the sake of marginally
+  tidier type hints. Sync no longer generates `.pyi` files and the stub tree is no longer indexed;
+  annotations still type correctly because they reference `pymcu.types`, which the interpreter
+  resolves by itself.
+- "Regenerate IDE Stubs" is now **Export Type Stubs…**, for type checkers running outside the IDE.
+  The editor does not read its output.
+
 ### Fixed
 - The New Project wizard collected a package manager and nothing read it, so
   choosing pip still ran `uv sync`. The choice is now passed to the sync, and

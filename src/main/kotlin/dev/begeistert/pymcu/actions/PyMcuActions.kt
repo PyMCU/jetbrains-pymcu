@@ -105,8 +105,11 @@ class PyMcuFlashAction : PyMcuAction("Flash", "Write the firmware to the board (
 
 /**
  * Installs dependencies with the configured package manager, then runs
- * `pymcu sync` so `dist/_generated/board.py` matches the configured board, and
- * regenerates the IDE stubs.
+ * `pymcu sync` so `dist/_generated/board.py` matches the configured board.
+ *
+ * It deliberately does not generate `.pyi` stubs: the IDE resolves to the
+ * installed sources, which is what makes the stdlib readable. See
+ * [dev.begeistert.pymcu.resolver.PyMcuImportResolver].
  */
 class PyMcuSyncAction : PyMcuAction("Sync Project", "Install dependencies and regenerate IDE support files", AllIcons.Actions.Refresh) {
     override fun perform(project: Project) = PyMcuSyncTask.launch(project)
@@ -145,9 +148,6 @@ object PyMcuSyncTask {
         indicator?.text = "Generating board module (pymcu sync)…"
         PyMcuCli.run(project, "sync", timeoutMs = 120_000)
 
-        indicator?.text = "Generating IDE stubs (pymcu stubs)…"
-        val stubs = PyMcuCli.run(project, "stubs", "--out", STUBS_DIR, "--remap-types", timeoutMs = 120_000)
-
         indicator?.text = "Refreshing indexes…"
         refreshGeneratedRoots(project, basePath)
         PyMcuBoardCatalogService.getInstance(project).invalidate()
@@ -161,18 +161,7 @@ object PyMcuSyncTask {
                     "Generated files were refreshed anyway."
             )
         }
-        if (!stubs.ok && stubs.started) {
-            // A CLI older than `pymcu stubs` is a normal situation, not an error.
-            PyMcuNotifications.info(
-                project, "PyMCU stubs",
-                "This pymcu version has no `stubs` command — IDE resolution falls back to the " +
-                    "installed sources. Upgrade with `pymcu upgrade` for typed completions."
-            )
-        }
     }
-
-    /** Where `pymcu stubs` writes, and what the library-roots provider indexes. */
-    const val STUBS_DIR: String = "dist/_generated/stubs"
 
     private fun refreshGeneratedRoots(project: Project, basePath: String) {
         val lfs = LocalFileSystem.getInstance()
@@ -204,27 +193,33 @@ class PyMcuConfigureAction : PyMcuAction(
 
 // ── stubs ────────────────────────────────────────────────────────────────────
 
-class PyMcuRegenerateStubsAction : PyMcuAction(
-    "Regenerate IDE Stubs",
-    "Run pymcu stubs and re-index the generated .pyi tree",
-    AllIcons.Actions.ForceRefresh
+/**
+ * Exports `.pyi` stubs for tooling *outside* the IDE — mypy or pyright in CI,
+ * say, which cannot see through the compat layers on their own.
+ *
+ * The editor does not read them: it resolves to the installed sources, so the
+ * implementation stays one click away. Nothing here is needed for completion.
+ */
+class PyMcuExportStubsAction : PyMcuAction(
+    "Export Type Stubs…",
+    "Run pymcu stubs, for type checkers outside the IDE",
+    AllIcons.ToolbarDecorator.Export
 ) {
     override fun perform(project: Project) {
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Generating PyMCU stubs", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Exporting PyMCU stubs", true) {
             override fun run(indicator: ProgressIndicator) {
                 val result = PyMcuCli.run(
-                    project, "stubs", "--out", PyMcuSyncTask.STUBS_DIR, "--remap-types",
-                    timeoutMs = 120_000
+                    project, "stubs", "--out", STUBS_DIR, "--remap-types", timeoutMs = 120_000
                 )
-                val basePath = project.basePath
-                if (basePath != null) {
-                    LocalFileSystem.getInstance()
-                        .refreshAndFindFileByPath("$basePath/${PyMcuSyncTask.STUBS_DIR}")
-                        ?.refresh(false, true)
+                project.basePath?.let {
+                    LocalFileSystem.getInstance().refreshAndFindFileByPath("$it/$STUBS_DIR")
                 }
-                dev.begeistert.pymcu.resolver.PyMcuLibraryRootsRefresher.refresh(project)
                 if (result.ok) {
-                    PyMcuNotifications.info(project, "PyMCU stubs", result.stdout.trim().ifEmpty { "Stubs generated." })
+                    PyMcuNotifications.info(
+                        project, "PyMCU stubs",
+                        "Written to $STUBS_DIR. The editor keeps resolving to the sources; " +
+                            "point your type checker at this tree."
+                    )
                 } else {
                     PyMcuNotifications.warn(
                         project, "PyMCU stubs",
@@ -233,5 +228,10 @@ class PyMcuRegenerateStubsAction : PyMcuAction(
                 }
             }
         })
+    }
+
+    private companion object {
+        /** Under dist/, so it is already gitignored and never indexed. */
+        const val STUBS_DIR = "dist/_generated/stubs"
     }
 }

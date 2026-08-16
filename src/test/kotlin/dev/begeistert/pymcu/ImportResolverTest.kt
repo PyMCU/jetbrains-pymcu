@@ -9,46 +9,63 @@ import java.nio.file.Path
 /**
  * Where the import resolver looks for a module, and in what order.
  *
- * The order is the contract: it mirrors the compiler's include path, so what
- * the editor resolves to is the file the build will compile. Getting it wrong
- * is silent — the import resolves, to the wrong thing.
+ * Two contracts are pinned here. The order mirrors the compiler's include path,
+ * so the editor and the build agree on which file a name means. And resolution
+ * always lands on **source**, never on a generated stub: reading down to the
+ * register write is the point of this compiler, and a `.pyi` full of `...`
+ * turns the stdlib into a black box. Getting either wrong is silent — the
+ * import still resolves, just to the wrong thing.
  */
 class ImportResolverTest {
 
-    private val stubsFlavor = Path.of("/p/dist/_generated/stubs/pymcu_micropython")
     private val sitePackages = Path.of("/p/.venv/lib/python3.12/site-packages/pymcu_micropython")
     private val generated = Path.of("/p/dist/_generated")
-    private val stubs = Path.of("/p/dist/_generated/stubs")
 
-    private val roots = listOf(stubsFlavor, sitePackages, generated, stubs)
+    /** What the resolver actually searches: sources, then the generated module. */
+    private val roots = listOf(sitePackages, generated)
 
     private fun candidates(vararg components: String) =
         PyMcuImportResolver.candidatePaths(roots, components.toList())
 
     // ── ordering ─────────────────────────────────────────────────────────────
 
+    /**
+     * The regression that matters: go-to-definition on `pin.value(1)` must land
+     * on the code that explains the sentinel, not on `def value(...) -> int: ...`.
+     */
     @Test
-    fun `a typed stub outranks the implementation of the same module`() {
+    fun `the implementation outranks a stub of the same module`() {
         val paths = candidates("machine")
-        val stub = paths.indexOf(stubsFlavor.resolve("machine.pyi"))
         val source = paths.indexOf(sitePackages.resolve("machine.py"))
+        val stub = paths.indexOf(sitePackages.resolve("machine.pyi"))
 
-        assertTrue("the stub must be looked for", stub >= 0)
         assertTrue("the implementation must be looked for", source >= 0)
-        assertTrue("the stub must come first", stub < source)
+        assertTrue("the source must come first", source < stub)
     }
 
     @Test
-    fun `within one root, pyi beats py and both beat the package directory`() {
-        val paths = candidates("machine").filter { it.startsWith(stubsFlavor) }
+    fun `within one root, py beats pyi and both beat the package directory`() {
+        val paths = candidates("machine").filter { it.startsWith(sitePackages) }
         assertEquals(
             listOf(
-                stubsFlavor.resolve("machine.pyi"),
-                stubsFlavor.resolve("machine.py"),
-                stubsFlavor.resolve("machine"),
+                sitePackages.resolve("machine.py"),
+                sitePackages.resolve("machine.pyi"),
+                sitePackages.resolve("machine"),
             ),
             paths
         )
+    }
+
+    /** The generated stub tree must not be reachable through resolution at all. */
+    @Test
+    fun `no candidate ever points into the generated stub tree`() {
+        val stubTree = Path.of("/p/dist/_generated/stubs")
+        for (name in listOf("machine", "board", "digitalio")) {
+            assertTrue(
+                "resolution must not reach the stub tree",
+                candidates(name).none { it.startsWith(stubTree) }
+            )
+        }
     }
 
     /** `import board` is served by the file `pymcu sync` regenerates. */
@@ -70,13 +87,13 @@ class ImportResolverTest {
     @Test
     fun `a dotted name becomes nested directories`() {
         val paths = candidates("pymcu", "hal", "gpio")
-        assertTrue(paths.contains(stubs.resolve("pymcu/hal/gpio.pyi")))
-        assertTrue(paths.contains(stubs.resolve("pymcu/hal/gpio.py")))
+        assertTrue(paths.contains(sitePackages.resolve("pymcu/hal/gpio.py")))
+        assertTrue(paths.contains(generated.resolve("pymcu/hal/gpio.py")))
     }
 
     @Test
     fun `a single component is looked for directly under each root`() {
-        assertTrue(candidates("digitalio").contains(stubsFlavor.resolve("digitalio.pyi")))
+        assertTrue(candidates("digitalio").contains(sitePackages.resolve("digitalio.py")))
     }
 
     // ── refusals ─────────────────────────────────────────────────────────────
@@ -102,11 +119,11 @@ class ImportResolverTest {
 
     // ── a project with no compat layer ───────────────────────────────────────
 
+    /** With no compat layer there is no site-packages root, only the generated one. */
     @Test
-    fun `a native project still resolves the generated and stub roots`() {
-        val nativeRoots = listOf(generated, stubs)
-        val paths = PyMcuImportResolver.candidatePaths(nativeRoots, listOf("pymcu", "time"))
-        assertTrue(paths.contains(stubs.resolve("pymcu/time.pyi")))
+    fun `a native project searches only the generated root`() {
+        val paths = PyMcuImportResolver.candidatePaths(listOf(generated), listOf("board"))
+        assertTrue(paths.contains(generated.resolve("board.py")))
         assertTrue(paths.none { it.startsWith(sitePackages) })
     }
 }

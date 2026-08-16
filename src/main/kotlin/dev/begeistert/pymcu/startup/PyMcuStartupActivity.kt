@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import dev.begeistert.pymcu.actions.PyMcuSyncTask
+import dev.begeistert.pymcu.venv.PyMcuVenv
 import dev.begeistert.pymcu.cli.PyMcuBoardCatalogService
 import dev.begeistert.pymcu.cli.PyMcuCli
 import dev.begeistert.pymcu.notifications.PyMcuNotifications
@@ -76,15 +77,17 @@ class PyMcuStartupActivity : ProjectActivity {
     private fun offerSyncIfNeeded(project: Project) {
         if (!PyMcuSettings.getInstance().offerSyncOnOpen) return
         val basePath = project.basePath ?: return
-        val generated = File(basePath, "dist/_generated")
-        val stubs = File(basePath, PyMcuSyncTask.STUBS_DIR)
-        if (generated.isDirectory && stubs.isDirectory) return
+        // The compat layer being installed is what makes the imports resolve.
+        val flavor = PyMcuProjectService.config(project)?.flavor
+        val compatInstalled = flavor == null ||
+            PyMcuVenv.sitePackages(basePath)?.resolve("pymcu_$flavor")?.toFile()?.isDirectory == true
+        if (compatInstalled && File(basePath, "dist/_generated").isDirectory) return
 
         PyMcuNotifications.info(
             project,
             "PyMCU project",
-            "Generated IDE support files are missing, so compat imports may not resolve. " +
-                "Sync installs dependencies and regenerates them.",
+            "Dependencies or generated files are missing, so the compat imports will not " +
+                "resolve. Sync installs them and regenerates the board module.",
             PyMcuNotifications.action("Sync now") { PyMcuSyncTask.launch(project) },
             PyMcuNotifications.action("Don't ask again") {
                 PyMcuSettings.getInstance().offerSyncOnOpen = false
