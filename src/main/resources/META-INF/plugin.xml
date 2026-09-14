@@ -76,6 +76,17 @@
             level="ERROR"
             implementationClass="dev.begeistert.pymcu.inspection.PyMcuPyprojectInspection"/>
 
+        <!-- The __CHIP__ branches this project will not build, dimmed like dead
+             code. Same evaluation as the resolver, so the two cannot disagree. -->
+        <localInspection
+            language="Python"
+            shortName="PyMcuDeadBranch"
+            displayName="HAL branch not compiled for this target"
+            groupName="PyMCU"
+            enabledByDefault="true"
+            level="WEAK WARNING"
+            implementationClass="dev.begeistert.pymcu.inspection.PyMcuDeadBranchInspection"/>
+
         <!-- Experimental gates. Off for everyone; see PyMcuExperimental. -->
         <registryKey
             key="pymcu.debugger.enabled"
