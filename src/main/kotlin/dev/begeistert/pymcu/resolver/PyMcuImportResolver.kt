@@ -78,7 +78,12 @@ class PyMcuImportResolver : PyImportResolver {
             stdlibPath?.let { add(Path.of(basePath).resolve(it).normalize()) }
             add(Path.of(basePath, "dist", "_generated"))
             if (sitePackages != null) {
-                for (flavor in flavors) add(sitePackages.resolve("pymcu_$flavor"))
+                // packageDir, not sitePackages/pymcu_<flavor>: an editable install
+                // leaves nothing under site-packages, and the layer's bare names
+                // are resolved here and nowhere else. See PyMcuVenv.packageDir.
+                for (flavor in flavors) {
+                    PyMcuVenv.packageDir(sitePackages, "pymcu_$flavor")?.let(::add)
+                }
             }
         }
     }
