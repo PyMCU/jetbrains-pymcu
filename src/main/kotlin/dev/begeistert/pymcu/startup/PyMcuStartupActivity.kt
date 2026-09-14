@@ -79,8 +79,9 @@ class PyMcuStartupActivity : ProjectActivity {
         val basePath = project.basePath ?: return
         // The compat layer being installed is what makes the imports resolve.
         val flavor = PyMcuProjectService.config(project)?.flavor
+        val sitePackages = PyMcuVenv.sitePackages(basePath)
         val compatInstalled = flavor == null ||
-            PyMcuVenv.sitePackages(basePath)?.resolve("pymcu_$flavor")?.toFile()?.isDirectory == true
+            (sitePackages != null && PyMcuVenv.packageDir(sitePackages, "pymcu_$flavor") != null)
         if (compatInstalled && File(basePath, "dist/_generated").isDirectory) return
 
         PyMcuNotifications.info(

@@ -76,12 +76,19 @@ object PyMcuSetupState {
         val sitePackages = basePath?.let { PyMcuVenv.sitePackages(it) }
         val flavor = config?.flavor
         val compatInstalled = flavor == null ||
-            sitePackages?.resolve("pymcu_$flavor")?.toFile()?.isDirectory == true
+            (sitePackages != null && PyMcuVenv.packageDir(sitePackages, "pymcu_$flavor") != null)
         // `pymcu` itself, not just the compat layer: for a native-HAL project
         // there is no flavor to look for, so checking only that left the step
         // green for an empty virtualenv, and the first build then failed on a
         // missing toolchain with the checklist still saying everything was fine.
-        val stdlibInstalled = sitePackages?.resolve("pymcu")?.toFile()?.isDirectory == true
+        //
+        // `types.py`, not the directory: `pymcu` is a namespace package, so an
+        // installed backend alone creates `site-packages/pymcu` without a line
+        // of the stdlib in it. Which portion holds `types.py` depends on how the
+        // stdlib was installed, hence every portion.
+        val stdlibInstalled = sitePackages != null &&
+            PyMcuVenv.packageDirs(sitePackages, "pymcu")
+                .any { it.resolve("types.py").toFile().isFile }
         val depsReady = sitePackages != null && compatInstalled && stdlibInstalled
         steps += SetupStep(
             id = "deps",

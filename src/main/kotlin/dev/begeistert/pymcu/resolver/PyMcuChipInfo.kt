@@ -54,10 +54,13 @@ class PyMcuChipInfoService(private val project: Project) {
 
     private fun readArch(chip: String): String? {
         val basePath = project.basePath ?: return null
-        val definition = PyMcuVenv.sitePackages(basePath)
-            ?.resolve("pymcu/chips/$chip.py")
-            ?.toFile()
-            ?.takeIf { it.isFile }
+        val sitePackages = PyMcuVenv.sitePackages(basePath) ?: return null
+        // All portions of the `pymcu` namespace package, not just the one under
+        // site-packages: with pymcu-stdlib installed editable that one holds only
+        // the backend's subpackages, and `chips/` is in the user's checkout.
+        val definition = PyMcuVenv.packageDirs(sitePackages, "pymcu")
+            .map { it.resolve("chips/$chip.py").toFile() }
+            .firstOrNull { it.isFile }
             ?: return null
         return try {
             ARCH.find(definition.readText())?.groupValues?.get(1)
