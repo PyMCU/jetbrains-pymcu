@@ -18,6 +18,11 @@ sources and the language subset comes from the driver, so the two never drift.
   (`machine`, `board`, `digitalio`, …) and the generated `board` module for your target —
   **always to the source**, never to a stub. Ctrl-click `pin.value(1)` and you land on the code
   that toggles the register, not on `def value(...) -> int: ...`.
+- **Navigation follows the compile-time dispatch.** The HAL picks its implementation from
+  `__CHIP__`, so one name exists once per architecture and again once per chip. The plugin
+  evaluates those conditions against your target, so Ctrl-click on an Arduino Uno project lands
+  in `hal/avr/gpio/atmega328p.py` and not in a Leonardo's or an RP2040's. The branches your
+  target does not build are greyed out in the editor.
 - **Project configuration dialog** — board, clock, compat stdlib, programmer, serial port and AVR
   fuses, written back to `[tool.pymcu]` without disturbing your comments or formatting. The board
   list comes from `pymcu boards --json`, so it matches whatever backends you have installed.

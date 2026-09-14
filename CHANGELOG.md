@@ -4,6 +4,25 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [Unreleased]
 
+### Fixed (navigation across the HAL's compile-time dispatch)
+- **Go To Declaration landed on another chip's HAL module.** `hal/avr/gpio/__init__.py`
+  picks one of six chip modules, all of them in `hal/avr/`, so the architecture
+  directory separated none of them and resolution fell back to the order of the
+  bindings in the file. An Arduino Uno project navigating `board_pin_name` landed
+  in `atmega32u4.py`, a Leonardo, and `pymcu_micropython/machine.py` imports that
+  name directly. An ATtiny2313 project's `uart_write` went to the generic
+  `avr/uart/avr.py` rather than to its own module. The plugin now reads the
+  facades: it evaluates each `__CHIP__` condition and each `match __CHIP__.<field>`
+  against the project's target and prefers the module the compiler would compile.
+  Where nothing can be decided, and for a project with no known target, resolution
+  is exactly what it was.
+
+### Added
+- **The branches this target will not build are greyed out.** A HAL facade holds
+  six implementations of one function; the editor now dims the ones the compiler
+  drops, so what is left on screen is what reaches the firmware. Same evaluation
+  as the resolver uses, so the dimming and the navigation cannot disagree.
+
 ### Fixed (from a plugin/driver divergence audit)
 - **The offline starter emitted AVR register names for every chip.** Creating a
   native-HAL project before the CLI is installed wrote `Pin("PB5", Pin.OUT)`,
