@@ -49,10 +49,29 @@ class PyMcuChipInfoService(private val project: Project) {
     private val archByChip = ConcurrentHashMap<String, String>()
 
     /**
+     * Set by tests in place of the on-disk lookup below.
+     *
+     * WHY a seam here rather than a fake filesystem: [readArch] reads the chip
+     * definition out of a real venv through `.pth` files, which a light IDE
+     * fixture has no way to produce. Everything downstream of the identity —
+     * which HAL branch is live, where Go To Declaration lands — is what the
+     * tests are about, and it is all reachable once the identity is given.
+     */
+    @Volatile
+    private var overriddenIdentity: ChipIdentity? = null
+
+    /** @see overriddenIdentity */
+    @org.jetbrains.annotations.TestOnly
+    fun overrideIdentity(identity: ChipIdentity?) {
+        overriddenIdentity = identity
+    }
+
+    /**
      * The chip this project targets and its architecture, or null when either
      * cannot be established. Cheap after the first call.
      */
     fun identity(): ChipIdentity? {
+        overriddenIdentity?.let { return it }
         val config = PyMcuProjectService.config(project) ?: return null
         val chip = config.explicitChip
             ?: config.board?.let {

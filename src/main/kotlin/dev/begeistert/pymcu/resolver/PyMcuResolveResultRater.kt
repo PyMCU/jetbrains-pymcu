@@ -15,8 +15,17 @@ import com.jetbrains.python.psi.types.TypeEvalContext
  * for. The project's own configuration answers that question, so this rates the
  * live one up and the rest down.
  *
- * See [PyMcuHalDispatch] for how "live" is decided, and why the rule is
- * deliberately conservative.
+ * Two questions get asked, in this order:
+ *
+ *  1. [PyMcuHalIndexService] — did a branch the compiler keeps import this
+ *     module? It has read the dispatch, so it settles the chip-level facades
+ *     where every candidate shares one architecture directory and the directory
+ *     rule below has nothing to go on.
+ *  2. [PyMcuHalDispatch] — failing that, is this the project's architecture at
+ *     all? A module no conditional import names still gets the coarse answer.
+ *
+ * Both stay silent for anything outside `pymcu/hal/` and for a project with no
+ * known target, so the worst case is the behaviour there was before either.
  */
 class PyMcuResolveResultRater : PyResolveResultRater {
 
@@ -29,7 +38,8 @@ class PyMcuResolveResultRater : PyResolveResultRater {
     ): Int = if (member == null) PyMcuHalDispatch.NEUTRAL else rate(member)
 
     private fun rate(element: PsiElement): Int {
-        val path = element.containingFile?.virtualFile?.path ?: return PyMcuHalDispatch.NEUTRAL
+        val file = element.containingFile ?: return PyMcuHalDispatch.NEUTRAL
+        val path = file.virtualFile?.path ?: return PyMcuHalDispatch.NEUTRAL
 
         // Cheapest possible rejection: this runs on every rated resolve in every
         // Python project, and almost none of them are under a PyMCU HAL.
@@ -39,6 +49,10 @@ class PyMcuResolveResultRater : PyResolveResultRater {
         val identity = PyMcuChipInfoService.getInstance(element.project).identity()
             ?: return PyMcuHalDispatch.NEUTRAL
 
-        return PyMcuHalDispatch.rate(directory, identity.chip, identity.arch)
+        return when (PyMcuHalIndexService.getInstance(element.project).verdictFor(file, identity)) {
+            PyMcuBranch.LIVE -> PyMcuHalDispatch.PREFERRED
+            PyMcuBranch.DEAD -> PyMcuHalDispatch.FOREIGN
+            PyMcuBranch.UNKNOWN -> PyMcuHalDispatch.rate(directory, identity.chip, identity.arch)
+        }
     }
 }

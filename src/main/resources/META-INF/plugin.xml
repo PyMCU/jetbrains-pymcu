@@ -21,6 +21,7 @@
         <projectService serviceImplementation="dev.begeistert.pymcu.cli.PyMcuBoardCatalogService"/>
         <projectService serviceImplementation="dev.begeistert.pymcu.lint.PyMcuLintResults"/>
         <projectService serviceImplementation="dev.begeistert.pymcu.resolver.PyMcuChipInfoService"/>
+        <projectService serviceImplementation="dev.begeistert.pymcu.resolver.PyMcuHalIndexService"/>
 
         <notificationGroup id="PyMCU" displayType="BALLOON" isLogByDefault="true"/>
 
@@ -92,7 +93,7 @@
 
         <!-- The HAL facades dispatch on __CHIP__ at compile time, which an IDE
              cannot evaluate, so every `Pin` resolves to all six architectures.
-             This prefers the one the project actually builds for. -->
+             This reads the dispatch and prefers the branch the compiler keeps. -->
         <resolveResultRater implementation="dev.begeistert.pymcu.resolver.PyMcuResolveResultRater"/>
     </extensions>
 
