@@ -7,8 +7,23 @@ import dev.begeistert.pymcu.project.PyMcuProjectService
 import dev.begeistert.pymcu.venv.PyMcuVenv
 import java.util.concurrent.ConcurrentHashMap
 
-/** A chip id and the architecture its own definition declares. */
-data class ChipIdentity(val chip: String, val arch: String)
+/**
+ * Everything the compile-time dispatch is allowed to ask about a target.
+ *
+ * These are exactly the fields `pymcu/chips/__init__.py` exposes to HAL code —
+ * `__CHIP__.name`, `__CHIP__.arch`, `__CHIP__.board` and `__FREQ__` — so a
+ * facade cannot branch on anything this does not carry.
+ *
+ * [board] is empty when the project names a chip instead of a board, which is
+ * the same empty string the compiler passes and which `hal/wifi.py` reads as
+ * "the program never said".
+ */
+data class ChipIdentity(
+    val chip: String,
+    val arch: String,
+    val board: String = "",
+    val frequency: Long? = null,
+)
 
 /**
  * Reads a chip's architecture from the installed stdlib rather than inferring it
@@ -45,11 +60,14 @@ class PyMcuChipInfoService(private val project: Project) {
             }
             ?: return null
 
-        archByChip[chip]?.let { return ChipIdentity(chip, it) }
+        // `board` stays empty for a project that names a chip: that is the value
+        // the compiler substitutes, and `hal/wifi.py` branches on the difference.
+        val board = config.board.orEmpty()
+        archByChip[chip]?.let { return ChipIdentity(chip, it, board, config.frequency) }
 
         val arch = readArch(chip) ?: return null
         archByChip[chip] = arch
-        return ChipIdentity(chip, arch)
+        return ChipIdentity(chip, arch, board, config.frequency)
     }
 
     private fun readArch(chip: String): String? {
