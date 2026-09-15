@@ -115,8 +115,10 @@ Work that is merged but not ready is off behind a registry key. To try one:
 ./gradlew verifyPlugin     # JetBrains plugin verifier, as run in CI
 ```
 
-Requires JDK 21. The Gradle daemon's JDK is pinned in `gradle.properties`; change
-`org.gradle.java.home` if yours lives elsewhere.
+Requires JDK 21. Gradle finds it on `PATH`/`JAVA_HOME` automatically on most
+setups; if you need to point at a specific JDK, set `org.gradle.java.home` in
+your own `~/.gradle/gradle.properties` rather than this project's (a
+per-machine path here would break the build for everyone else).
 
 ## Requirements on the CLI
 
