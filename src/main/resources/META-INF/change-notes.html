@@ -1,6 +1,9 @@
-<h4>0.1.0</h4>
-<p>First public release.</p>
+<h4>0.1.0-beta.1</h4>
+<p>Beta 1, matching compiler release 0.1.0b1.</p>
 <ul>
+  <li>Go To Declaration on a HAL facade now evaluates the <code>__CHIP__</code> condition the
+      compiler would, and lands on the project's own chip module instead of a neighbour's;
+      branches the target will not build are dimmed in the editor.</li>
   <li>Porting assistant: <code>pymcu lint</code> findings as editor annotations and a navigable list
       in the PyMCU tool window.</li>
   <li>Project configuration dialog fed by <code>pymcu boards --json</code>, covering every board the
