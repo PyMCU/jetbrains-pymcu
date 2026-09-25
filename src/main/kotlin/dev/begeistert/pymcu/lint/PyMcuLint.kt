@@ -21,11 +21,48 @@ data class LintFinding(
 
 data class LintFileReport(val path: String, val findings: List<LintFinding>)
 
+/**
+ * What `pymcu lint` looked at, as the report itself states it.
+ *
+ * It exists because an empty finding list was being rendered as "this should port cleanly",
+ * and lint had not checked anything that sentence claims. It resolves no name, knows no type,
+ * follows no import and does not know the target: measured on four programs the compiler
+ * refuses (an undefined call, a literal too wide for its parameter, an unknown type, a write
+ * to a field that does not exist) it reports nothing for all four.
+ *
+ * Read from the report rather than written here, because three renderers in three
+ * repositories each wrote their own sentence and they did not agree. One report, one wording.
+ */
+data class LintScope(val summary: String, val forCorrectnessRun: String) {
+    companion object {
+        /**
+         * A report with no `scope` came from a driver older than the field.
+         *
+         * The answer is NOT to fall back to the cheerful sentence. An older driver checked
+         * exactly as little as this one; it just did not say so. This says it on its behalf.
+         */
+        val UNSTATED = LintScope(
+            "porting idioms only; names, types and imports were not resolved",
+            "pymcu build")
+    }
+}
+
 data class LintReport(
     val flavor: String?,
     val files: List<LintFileReport>,
+    val scope: LintScope = LintScope.UNSTATED,
 ) {
     val allFindings: List<LintFinding> get() = files.flatMap { it.findings }
+
+    /**
+     * What to show when nothing was found, which is the whole point of this class.
+     *
+     * A claim about the findings, never about whether the program builds. The two are not the
+     * same and only one of them was measured.
+     */
+    val nothingFoundMessage: String
+        get() = "No porting blockers found (${scope.summary}). " +
+                "Run `${scope.forCorrectnessRun}` to check it compiles."
 }
 
 /**
@@ -97,6 +134,13 @@ object PyMcuLint {
             } ?: emptyList()
             LintFileReport(path, findings)
         }
-        return LintReport(root["flavor"].str(), files)
+        @Suppress("UNCHECKED_CAST")
+        val scope = (root["scope"] as? Map<String, Any?>)?.let {
+            LintScope(
+                summary = it["summary"].str() ?: LintScope.UNSTATED.summary,
+                forCorrectnessRun = it["for_correctness_run"].str()
+                    ?: LintScope.UNSTATED.forCorrectnessRun)
+        } ?: LintScope.UNSTATED
+        return LintReport(root["flavor"].str(), files, scope)
     }
 }

@@ -166,9 +166,10 @@ internal class PyMcuToolWindowPanel(private val project: Project) : JPanel(Borde
                 "Run the porting assistant to list MicroPython / CircuitPython idioms that need a rewrite."
             )))
         } else if (report.allFindings.isEmpty()) {
-            findingsRoot.add(DefaultMutableTreeNode(MessageNode(
-                "No findings — this should port cleanly."
-            )))
+            // The report says what it looked at; this panel does not get to paraphrase it.
+            // The sentence that stood here promised a clean port about programs that do not
+            // compile, because lint checks no name, type or import.
+            findingsRoot.add(DefaultMutableTreeNode(MessageNode(report.nothingFoundMessage)))
         } else {
             for (file in report.files) {
                 if (file.findings.isEmpty()) continue

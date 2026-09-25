@@ -73,9 +73,13 @@ object PyMcuLintRunner {
         val flavor = report.flavor?.let { " (flavor: $it)" } ?: ""
 
         if (findings.isEmpty()) {
+            // NOT "this should port cleanly", which is what stood here. That is a claim about
+            // compiling, and a program that does not build reached it: the porting assistant
+            // reads a fixed list of idioms and checks no name, type or import. The wording now
+            // comes from the report's own scope, so this is not the place that decides it.
             PyMcuNotifications.info(
                 project, "PyMCU porting assistant",
-                "No findings$flavor — this should port cleanly."
+                report.nothingFoundMessage + flavor
             )
         } else {
             PyMcuNotifications.info(
