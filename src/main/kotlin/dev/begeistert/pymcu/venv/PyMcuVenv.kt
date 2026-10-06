@@ -1,5 +1,9 @@
 package dev.begeistert.pymcu.venv
 
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.OrderRootType
+import com.intellij.openapi.roots.ProjectRootManager
+import dev.begeistert.pymcu.project.PyMcuProjectService
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -71,6 +75,24 @@ object PyMcuVenv {
     }
 
     /**
+     * Directories named [packageName] reachable through the project's configured
+     * interpreter, wherever its class roots point.
+     *
+     * The project need not own a `.venv` at all — a shared or foreign SDK still
+     * carries site-packages, and PyCharm adds every directory a `.pth` names as
+     * a class root too, so `pymcu` and the compat layer stay findable for a
+     * project that resolves `import pymcu` through the IDE's interpreter but has
+     * no venv directory under its base path.
+     */
+    fun sdkPackageDirs(project: Project, packageName: String): List<Path> {
+        val sdk = ProjectRootManager.getInstance(project).projectSdk ?: return emptyList()
+        return sdk.rootProvider.getFiles(OrderRootType.CLASSES)
+            .mapNotNull { it.findChild(packageName)?.takeIf { dir -> dir.isDirectory } }
+            .map { Path.of(it.path) }
+            .distinct()
+    }
+
+    /**
      * The `sys.path` entries the `.pth` files in [sitePackages] add.
      *
      * Every non-blank line that is not a comment and not an `import` hook is a
@@ -102,6 +124,29 @@ object PyMcuVenv {
         }
         cache[sitePackages] = CachedRoots(stamp, roots)
         return roots
+    }
+
+    /**
+     * True when [path] lies in the `pymcu` the project itself builds against:
+     * a portion of the project's own venv, or the checkout `stdlib_path` names.
+     *
+     * A foreign or shared SDK can carry a different `pymcu` — cp-servo pointed
+     * at another project's interpreter served a stdlib months older than the
+     * editable checkout in its own `.venv`. When resolution offers both, this
+     * is what separates "the file the compiler reads" from "the same file as it
+     * looked a release ago".
+     */
+    fun isProjectStdlibFile(project: Project, path: String): Boolean {
+        val basePath = project.basePath ?: return false
+        val normalized = path.replace('\\', '/')
+        PyMcuProjectService.config(project)?.stdlibPath?.let {
+            val root = Path.of(basePath).resolve(it).normalize().toString().replace('\\', '/')
+            if (normalized.startsWith("$root/")) return true
+        }
+        val sitePackages = sitePackages(basePath) ?: return false
+        return packageDirs(sitePackages, "pymcu").any {
+            normalized.startsWith(it.toString().replace('\\', '/') + "/")
+        }
     }
 
     /**

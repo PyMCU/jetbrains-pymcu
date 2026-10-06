@@ -1,5 +1,6 @@
 package dev.begeistert.pymcu.resolver
 
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
@@ -40,6 +41,9 @@ import java.nio.file.Path
  *   1. `stdlib_path`, when the project sets one — a local stdlib checkout
  *   2. `dist/_generated`                — the generated `board` module
  *   3. `<site-packages>/pymcu_<flavor>` — the compat layer's implementation
+ *   4. `pymcu` namespace parents        — for `pymcu.*` only: every sys.path
+ *      entry the project's venv gives the stdlib, so a foreign SDK serving an
+ *      older `pymcu` is not the only answer resolution ever sees
  *
  * The generated directory goes first because that is what `build.py` does —
  * `extra_includes.insert(0, generated_dir)`, so the board shim wins. No module
@@ -61,15 +65,23 @@ class PyMcuImportResolver : PyImportResolver {
         val config = PyMcuProjectService.config(project) ?: return null
         val basePath = project.basePath ?: return null
 
-        val target = findIn(searchRoots(basePath, config.stdlib, config.stdlibPath), components)
-            ?: return null
+        val target = findIn(
+            searchRoots(project, basePath, config.stdlib, config.stdlibPath, components.first() == "pymcu"),
+            components
+        ) ?: return null
         return PsiManager.getInstance(project).let { psi ->
             if (target.isDirectory) psi.findDirectory(target) else psi.findFile(target)
         }
     }
 
     /** The include path, in the order the compiler resolves it. */
-    private fun searchRoots(basePath: String, flavors: List<String>, stdlibPath: String?): List<Path> {
+    private fun searchRoots(
+        project: Project,
+        basePath: String,
+        flavors: List<String>,
+        stdlibPath: String?,
+        pymcuNamespace: Boolean
+    ): List<Path> {
         val sitePackages = PyMcuVenv.sitePackages(basePath)
         return buildList {
             // `stdlib_path` goes ahead of everything installed, which is what
@@ -84,8 +96,28 @@ class PyMcuImportResolver : PyImportResolver {
                 for (flavor in flavors) {
                     PyMcuVenv.packageDir(sitePackages, "pymcu_$flavor")?.let(::add)
                 }
+                if (pymcuNamespace) {
+                    // `pymcu` is a namespace package whose portions live under
+                    // the entries a `.pth` adds to sys.path — the parents are
+                    // the roots `import pymcu.*` resolves through. Without this
+                    // a foreign or stale SDK is the only answer the IDE has: it
+                    // serves whatever pymcu it carries, and the project's own
+                    // stdlib — the copy the build compiles — never enters the
+                    // resolution. The project's portions go ahead of the SDK's
+                    // for the same reason the compat layer's do below.
+                    PyMcuVenv.packageDirs(sitePackages, "pymcu").mapNotNullTo(this) { it.parent }
+                }
             }
-        }
+            // A project may run on a shared or foreign interpreter and own no
+            // `.venv`; the compat layer is still importable through the SDK's
+            // class roots, and the project's own copy wins when both exist.
+            for (flavor in flavors) {
+                addAll(PyMcuVenv.sdkPackageDirs(project, "pymcu_$flavor"))
+            }
+            if (pymcuNamespace) {
+                addAll(PyMcuVenv.sdkPackageDirs(project, "pymcu").mapNotNull { it.parent })
+            }
+        }.distinct()
     }
 
     /**

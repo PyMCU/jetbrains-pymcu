@@ -90,12 +90,22 @@ class PyMcuChipInfoService(private val project: Project) {
     }
 
     private fun readArch(chip: String): String? {
-        val basePath = project.basePath ?: return null
-        val sitePackages = PyMcuVenv.sitePackages(basePath) ?: return null
-        // All portions of the `pymcu` namespace package, not just the one under
-        // site-packages: with pymcu-stdlib installed editable that one holds only
-        // the backend's subpackages, and `chips/` is in the user's checkout.
-        val definition = PyMcuVenv.packageDirs(sitePackages, "pymcu")
+        val pymcuDirs = buildList {
+            project.basePath
+                ?.let(PyMcuVenv::sitePackages)
+                ?.let {
+                    // All portions of the `pymcu` namespace package, not just the
+                    // one under site-packages: with pymcu-stdlib installed editable
+                    // that one holds only the backend's subpackages, and `chips/`
+                    // is in the user's checkout.
+                    addAll(PyMcuVenv.packageDirs(it, "pymcu"))
+                }
+            // A project may own no `.venv` at all and still resolve `import
+            // pymcu` through a shared interpreter; the SDK's class roots are
+            // the same search path that interpreter would use.
+            addAll(PyMcuVenv.sdkPackageDirs(project, "pymcu"))
+        }
+        val definition = pymcuDirs
             .map { it.resolve("chips/$chip.py").toFile() }
             .firstOrNull { it.isFile }
             ?: return null
