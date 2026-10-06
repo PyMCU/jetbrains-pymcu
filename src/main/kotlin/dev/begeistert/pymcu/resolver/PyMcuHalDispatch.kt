@@ -81,4 +81,14 @@ object PyMcuHalDispatch {
     const val PREFERRED: Int = 100
     const val NEUTRAL: Int = 0
     const val FOREIGN: Int = -100
+
+    /**
+     * The bonus for the copy the project itself compiles — a `pymcu` portion of
+     * the project's own `.venv`, or `stdlib_path`. A foreign SDK can carry a
+     * different `pymcu` (another project's stale stdlib), and when both answer
+     * an import the two files get the same verdict and `resolve()` keeps the
+     * first — the SDK's. One point never flips a verdict (the PREFERRED/FOREIGN
+     * gap is 200); it only breaks the tie between two copies of the same file.
+     */
+    const val PROJECT: Int = 1
 }

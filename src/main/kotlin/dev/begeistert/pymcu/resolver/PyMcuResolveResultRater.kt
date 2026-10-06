@@ -1,9 +1,11 @@
 package dev.begeistert.pymcu.resolver
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.psi.PsiElement
 import com.jetbrains.python.psi.impl.PyResolveResultRater
 import com.jetbrains.python.psi.types.PyType
 import com.jetbrains.python.psi.types.TypeEvalContext
+import dev.begeistert.pymcu.venv.PyMcuVenv
 
 /**
  * Prefers the HAL implementation for the architecture the project targets.
@@ -29,6 +31,8 @@ import com.jetbrains.python.psi.types.TypeEvalContext
  */
 class PyMcuResolveResultRater : PyResolveResultRater {
 
+    private val log = Logger.getInstance(PyMcuResolveResultRater::class.java)
+
     override fun getImportElementRate(target: PsiElement): Int = rate(target)
 
     override fun getMemberRate(
@@ -47,12 +51,26 @@ class PyMcuResolveResultRater : PyResolveResultRater {
             ?: return PyMcuHalDispatch.NEUTRAL
 
         val identity = PyMcuChipInfoService.getInstance(element.project).identity()
-            ?: return PyMcuHalDispatch.NEUTRAL
+        if (identity == null) {
+            // A HAL candidate with no resolved target is how the six-way popup
+            // comes back; it must leave a trace or the failure is invisible.
+            log.debug("PyMCU: $path is under a HAL but the target cannot be resolved; staying neutral")
+            return PyMcuHalDispatch.NEUTRAL
+        }
 
-        return when (PyMcuHalIndexService.getInstance(element.project).verdictFor(file, identity)) {
+        val verdict = PyMcuHalIndexService.getInstance(element.project).verdictFor(file, identity)
+        val rate = when (verdict) {
             PyMcuBranch.LIVE -> PyMcuHalDispatch.PREFERRED
             PyMcuBranch.DEAD -> PyMcuHalDispatch.FOREIGN
             PyMcuBranch.UNKNOWN -> PyMcuHalDispatch.rate(directory, identity.chip, identity.arch)
         }
+        // Two `pymcu` trees can answer at once — the SDK's and the project's own
+        // venv. Same file, same verdict, and resolve() keeps whichever came
+        // first, which is the SDK's — so navigation opened the stale copy and
+        // died at the member the old class lacks. The project's copy is the one
+        // the build compiles; it wins the tie.
+        val bonus = if (PyMcuVenv.isProjectStdlibFile(element.project, path)) PyMcuHalDispatch.PROJECT else 0
+        log.debug("PyMCU: $verdict (${rate + bonus}) $path")
+        return rate + bonus
     }
 }

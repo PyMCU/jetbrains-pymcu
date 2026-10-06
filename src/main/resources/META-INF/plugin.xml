@@ -106,6 +106,19 @@
              cannot evaluate, so every `Pin` resolves to all six architectures.
              This reads the dispatch and prefers the branch the compiler keeps. -->
         <resolveResultRater implementation="dev.begeistert.pymcu.resolver.PyMcuResolveResultRater"/>
+
+        <!-- The rater above is never consulted for a name a conditional import
+             bound — PyReferenceImpl re-rates those candidates itself and every
+             HAL class ties at 0. This replays the same scope crawl and returns
+             the candidates with the dispatch verdict applied. -->
+        <pyReferenceResolveProvider
+            implementation="dev.begeistert.pymcu.resolver.PyMcuHalReferenceResolveProvider"/>
+
+        <!-- And the qualified form, `pymcu.hal.pwm.PWM`: PyFile.multiResolveName
+             returns a single last-binding-wins element — the last elif — before
+             any rater sees a candidate. An override here picks the live one. -->
+        <pyModuleMembersProvider
+            implementation="dev.begeistert.pymcu.resolver.PyMcuHalModuleMembersProvider"/>
     </extensions>
 
     <actions>
