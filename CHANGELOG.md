@@ -86,8 +86,12 @@ Matches compiler release 0.1.0b1. Published to the beta channel.
 - **Serial monitor.** A PyMCU program's `print()` goes out of a UART, and the
   plugin already knew the device and speed from `stdout` / `stdout_baud` without
   having anywhere to put them. Tools | PyMCU | Serial Monitor opens a console on
-  the board, reusing the pinned flash port or asking which one. Not supported on
-  Windows, where it says so rather than half-working.
+  the board through `pymcu monitor`, the driver's own serial reader, so the port
+  rules and Windows support come from the same place `pymcu flash` uses, and
+  typing in the console reaches the board. A monitor left open no longer fights
+  a flash for the port: the flash pauses it and the monitor comes back when the
+  programmer lets go, usually in time for the boot messages. A successful flash
+  offers to open the monitor, which is the next thing the user reaches for.
 - **The New Project wizard was redesigned.** Board picker with the catalog's own
   group headings and speed search instead of a flat 40-entry list; a line under
   the chip saying what it actually is (`AVR · avr toolchain · flashed with
@@ -102,6 +106,20 @@ Matches compiler release 0.1.0b1. Published to the beta channel.
   the chip's own `device_info(...)` line rather than guessing it from the name.
   Conservative by design: anything it does not recognise rates neutral, and it
   does not filter within the PIC family, where the facades share code unevenly.
+- **That verdict now reaches the places the rater cannot.** A reference to a
+  name a conditional import bound, like the `_PWM` a compat layer uses inside
+  `__init__`, is re-rated by PyCharm itself and used to land on the facade's
+  last `elif` regardless of the target; a qualified `pymcu.hal.pwm.PWM` never
+  produced a candidate list at all, because last-binding-wins answers before
+  any rater runs. Both now get the same dispatch verdict, so a servo sketch's
+  `self._pwm.set_duty_u16(...)` lands on the register map the compiler compiles.
+- **`import pymcu.*` resolves through the project's own venv, not only the
+  SDK.** A project pointed at another project's interpreter was served that
+  interpreter's `pymcu`, months older than the editable checkout in its own
+  `.venv`, and navigation died at the members the old classes lack. The
+  namespace portions the project's `.pth` files name now answer alongside the
+  SDK's, and when the same file comes back from both, the copy the build
+  compiles wins.
 
 ### Fixed
 - **The wizard's clock defaults disagreed with the driver**, and because it
@@ -114,6 +132,15 @@ Matches compiler release 0.1.0b1. Published to the beta channel.
 - The configuration dialog and the wizard both hid boards the catalog lists
   without a group — `pico`, `rp2040`, `pico2`, `rp2350`, and any future board
   the driver adds before grouping it.
+- **The porting assistant's clean bill of health now says what it checked.**
+  `pymcu lint` walks CPython's `ast` over a fixed list of porting idioms; it
+  resolves no name and knows no type, and the balloon still told programs the
+  compiler refuses "this should port cleanly". The wording now comes from the
+  report's `scope`, emitted by the driver, so the editor repeats what was
+  actually looked at instead of promising a port.
+- **`info` lint findings no longer squiggle the editor.** A confirmation that a
+  name maps to the compat layer is not a problem on the line it points at; the
+  finding still lists in the tool window's Porting tree.
 
 ### Fixed (earlier)
 - **The New Project wizard now scaffolds with `pymcu new` instead of a template
