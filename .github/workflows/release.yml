@@ -1,14 +1,218 @@
 name: Release
 
+# Publishes a GitHub prerelease carrying the plugin zip, with notes taken from
+# CHANGELOG.md. Three ways in:
+#
+#   - push a tag:            git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1
+#   - dry-run by hand:       gh workflow run release.yml -f version=0.1.0-beta.1 -f dry_run=true
+#   - release by hand:       gh workflow run release.yml -f version=0.1.0-beta.1
+#
+# The JetBrains Marketplace upload is a separate opt-in job: it only runs on a
+# manual dispatch with publish_marketplace=true and only when the PUBLISH_TOKEN
+# secret exists. The publishing block in build.gradle.kts routes a hyphenated
+# version to the "beta" channel, so a beta can never land on stable by accident.
+
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, e.g. 0.1.0-beta.1 (empty: pluginVersion from gradle.properties)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Build, test and verify only; attach the zip as a run artifact and publish nothing'
+        type: boolean
+        default: false
+      publish_marketplace:
+        description: 'Also upload to the JetBrains Marketplace (needs the PUBLISH_TOKEN secret; a hyphenated version goes to the beta channel)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      version: ${{ steps.stamp.outputs.version }}
+      tag: ${{ steps.stamp.outputs.tag }}
+      publish_token: ${{ steps.secrets.outputs.publish_token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # gradle.properties pins the daemon JDK to a local Homebrew path; on CI the
+      # JDK that setup-java installed is the right one.
+      - name: Use the runner's JDK
+        run: sed -i '/^org.gradle.java.home/d' gradle.properties
+
+      # Secrets cannot sit in a job-level if:, so probe them here and hand the
+      # booleans to the steps and the marketplace job.
+      - name: Probe the optional secrets
+        id: secrets
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          {
+            echo "signing=$([ -n "$CERTIFICATE_CHAIN" ] && [ -n "$PRIVATE_KEY" ] && echo true || echo false)"
+            echo "publish_token=$([ -n "$PUBLISH_TOKEN" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          if [ -z "$CERTIFICATE_CHAIN" ] || [ -z "$PRIVATE_KEY" ]; then
+            echo "::notice::No CERTIFICATE_CHAIN/PRIVATE_KEY configured: the release zip will be unsigned."
+          fi
+          [ -z "$PUBLISH_TOKEN" ] && echo "::notice::No PUBLISH_TOKEN configured: the Marketplace step is unavailable." || true
+
+      # The tag wins on a tag push; the input wins on a dispatch; gradle.properties
+      # is the fallback. Stamping keeps the zip's <version> equal to what the
+      # release will be called even when gradle.properties was not bumped first.
+      - name: Resolve and stamp the version
+        id: stamp
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            tag="$GITHUB_REF_NAME"
+          else
+            version="${{ inputs.version }}"
+            [ -n "$version" ] || version=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
+            tag="v${version}"
+          fi
+          case "$version" in
+            ''|*[!0-9a-zA-Z.-]*) echo "::error::Bad version '$version'"; exit 1 ;;
+          esac
+          sed -i "s/^pluginVersion = .*/pluginVersion = ${version}/" gradle.properties
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Release notes are the version's CHANGELOG section; refusing to release
+      # without one is the point of keeping the file current.
+      - name: Extract the release notes
+        run: |
+          version="${{ steps.stamp.outputs.version }}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## [${version}]' section."
+            exit 1
+          fi
+          head -5 release-notes.md
+
+      # Downloads the IDEs it checks against; the list lives in build.gradle.kts,
+      # not gradle.properties, so the version stamp does not bust the cache.
+      - name: Cache plugin verifier IDEs
+        uses: actions/cache@v4
+        with:
+          path: ~/.pluginVerifier
+          key: plugin-verifier-${{ hashFiles('build.gradle.kts') }}
+          restore-keys: plugin-verifier-
+
+      # Never publish something the verifier rejects.
+      - run: ./gradlew test verifyPluginProjectConfiguration verifyPlugin buildPlugin --no-daemon
+
+      - name: Sign the distribution
+        if: steps.secrets.outputs.signing == 'true'
+        run: ./gradlew signPlugin --no-daemon
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+
+      - name: Collect the distribution
+        run: |
+          mkdir -p dist
+          if ls build/distributions/*-signed.zip 2>/dev/null; then
+            cp build/distributions/*-signed.zip dist/
+          else
+            cp build/distributions/*.zip dist/
+          fi
+          ls -l dist/
+
+      # The zip's own descriptor must carry the version being released.
+      - name: Check the packaged plugin.xml
+        run: |
+          zipfile=$(ls dist/*.zip | head -1)
+          jar=$(unzip -Z1 "$zipfile" | grep '\.jar$' | head -1)
+          unzip -o -q "$zipfile" "$jar" -d /tmp/pluginzip
+          packaged=$(unzip -p "/tmp/pluginzip/$jar" META-INF/plugin.xml | grep -o '<version>[^<]*' | cut -d'>' -f2)
+          echo "packaged version: $packaged"
+          [ "$packaged" = "${{ steps.stamp.outputs.version }}" ]
+
+      - name: Compose the release body
+        run: |
+          {
+            cat release-notes.md
+            echo
+            echo '---'
+            echo
+            echo '**Install:** PyCharm → Settings → Plugins → gear icon → *Install Plugin from Disk…* → pick the `.zip` below → restart.'
+            echo
+            echo 'Requires PyCharm 2024.3 or newer and the PyMCU CLI (`pipx install pymcu-compiler`).'
+            if [ "${{ steps.secrets.outputs.signing }}" != "true" ]; then
+              echo
+              echo '_This build is unsigned: no signing certificate is configured on the repository._'
+            fi
+          } > release-body.md
+
+      - name: Upload the dry-run artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-release-dry-run-${{ steps.stamp.outputs.version }}
+          path: |
+            dist/*.zip
+            release-body.md
+
+      - name: Dry-run summary
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: |
+          {
+            echo "### Dry run for ${{ steps.stamp.outputs.tag }}"
+            echo 'Everything passed; nothing was published. This is what the release body would say:'
+            echo
+            cat release-body.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the GitHub release
+        if: github.event_name == 'push' || !inputs.dry_run
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.stamp.outputs.tag }}
+          name: PyMCU ${{ steps.stamp.outputs.version }}
+          prerelease: ${{ contains(steps.stamp.outputs.version, '-') }}
+          body_path: release-body.md
+          files: dist/*.zip
+
+  # Opt-in only: never on a tag push, never on a dry run, never without the
+  # token. The channel comes from the version itself (see build.gradle.kts):
+  # 0.1.0-beta.1 goes to beta, a stable version would go to default, which is
+  # why asking for it is a deliberate checkbox.
+  marketplace:
+    needs: release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_marketplace == true &&
+      inputs.dry_run == false &&
+      needs.release.outputs.publish_token == 'true'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -22,13 +226,13 @@ jobs:
       - name: Use the runner's JDK
         run: sed -i '/^org.gradle.java.home/d' gradle.properties
 
-      - name: Take the version from the tag
+      - name: Stamp the version
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          sed -i "s/^pluginVersion = .*/pluginVersion = ${version}/" gradle.properties
-
-      # Never publish something the verifier rejects.
-      - run: ./gradlew verifyPlugin --no-daemon
+          sed -i "s/^pluginVersion = .*/pluginVersion = ${{ needs.release.outputs.version }}/" gradle.properties
+          case "${{ needs.release.outputs.version }}" in
+            *-*) echo "::notice::Publishing ${{ needs.release.outputs.version }} to the '${{ needs.release.outputs.version }}'-derived beta channel." ;;
+            *) echo "::notice::Publishing stable ${{ needs.release.outputs.version }} to the default channel." ;;
+          esac
 
       - name: Sign and publish to the JetBrains Marketplace
         run: ./gradlew publishPlugin --no-daemon
@@ -37,8 +241,3 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-
-      - name: Attach the signed distribution to the GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/distributions/*.zip
