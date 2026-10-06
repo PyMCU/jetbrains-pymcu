@@ -6,98 +6,52 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The command that streams a board's UART.
+ * The `pymcu monitor` invocation the console runs.
  *
- * It is assembled into a `/bin/sh -c` string, so the parts that matter are the
- * ones a shell can misread: the device flag, which differs between macOS and
- * GNU `stty` and silently means something else when wrong, and the quoting of a
- * port that ultimately comes from the user.
+ * The serial work moved to the driver — what is left here to get wrong is the
+ * argument vector itself, and the refusals that keep a nonsense port or baud
+ * from reaching it.
  */
 class SerialMonitorTest {
 
-    private fun script(
+    private fun argv(
         port: String = "/dev/cu.usbmodem1101",
         baud: Int = 115_200,
-        mac: Boolean = true,
-    ): String {
-        val plan = PyMcuSerialMonitor.plan(port, baud, windows = false, mac = mac)
+        executable: String = "/venv/bin/pymcu",
+    ): List<String> {
+        val plan = PyMcuSerialMonitor.plan(executable, port, baud)
         assertTrue("expected a command, got $plan", plan is PyMcuSerialMonitor.Plan.Command)
-        return (plan as PyMcuSerialMonitor.Plan.Command).argv.last()
+        return (plan as PyMcuSerialMonitor.Plan.Command).argv
     }
 
     // ── the command ──────────────────────────────────────────────────────────
 
     @Test
-    fun `the port is configured and then read`() {
-        val command = script()
-        assertTrue(command.contains("stty"))
-        assertTrue(command.contains("115200"))
-        assertTrue(command.contains("cat"))
-        assertTrue("stty must run before cat", command.indexOf("stty") < command.indexOf("cat"))
+    fun `it runs pymcu monitor on the port at the baud`() {
+        assertEquals(
+            listOf("/venv/bin/pymcu", "monitor", "--port", "/dev/cu.usbmodem1101", "--baud", "115200"),
+            argv()
+        )
     }
 
-    /** `-f` on macOS, `-F` on GNU. The wrong one makes stty read the device as a script. */
+    /** The executable is argv[0], never baked in — the project's own venv supplies it. */
     @Test
-    fun `the device flag follows the platform`() {
-        assertTrue(script(mac = true).contains("stty -f "))
-        assertTrue(script(mac = false).contains("stty -F "))
-    }
-
-    /**
-     * Without `raw`, the line discipline rewrites the bytes and a firmware
-     * printing bare newlines comes out as a staircase.
-     */
-    @Test
-    fun `the line discipline is raw and does not echo`() {
-        val command = script()
-        assertTrue(command.contains(" raw"))
-        assertTrue(command.contains("-echo"))
+    fun `the executable is whatever the CLI lookup returned`() {
+        assertEquals("/other/pymcu", argv(executable = "/other/pymcu").first())
     }
 
     @Test
-    fun `the reader replaces the shell rather than nesting under it`() {
-        // exec, so the Stop button kills cat instead of an sh that outlives it.
-        assertTrue(script().contains("exec cat"))
-    }
-
-    @Test
-    fun `it is run through a shell, since it is two commands`() {
-        val plan = PyMcuSerialMonitor.plan("/dev/ttyACM0", 9600, windows = false, mac = false)
-        val argv = (plan as PyMcuSerialMonitor.Plan.Command).argv
-        assertEquals(listOf("/bin/sh", "-c"), argv.dropLast(1))
-    }
-
-    // ── quoting ──────────────────────────────────────────────────────────────
-
-    @Test
-    fun `the port is quoted, so a space cannot split it`() {
-        assertTrue(script(port = "/dev/tty odd").contains("'/dev/tty odd'"))
-    }
-
-    @Test
-    fun `a quote in the port cannot escape the string`() {
-        assertEquals("""'a'\''b'""", PyMcuSerialMonitor.shellQuote("a'b"))
-        val command = script(port = """/dev/x'; rm -rf /; '""")
-        assertTrue("the injection must stay inside the quotes", command.contains("""'\''"""))
+    fun `the baud reaches the driver as given`() {
+        assertTrue(argv(baud = 9600).contains("9600"))
     }
 
     // ── refusals ─────────────────────────────────────────────────────────────
 
     @Test
-    fun `Windows says so instead of half-working`() {
-        val plan = PyMcuSerialMonitor.plan("COM3", 115_200, windows = true, mac = false)
-        assertTrue(plan is PyMcuSerialMonitor.Plan.Unsupported)
-        // The message has to leave the user able to do it themselves.
-        val reason = (plan as PyMcuSerialMonitor.Plan.Unsupported).reason
-        assertTrue(reason.contains("COM3"))
-        assertTrue(reason.contains("115200"))
-    }
-
-    @Test
     fun `a missing port or a nonsense baud is refused`() {
-        assertTrue(PyMcuSerialMonitor.plan("", 115_200, false, true) is PyMcuSerialMonitor.Plan.Unsupported)
-        assertTrue(PyMcuSerialMonitor.plan("/dev/x", 0, false, true) is PyMcuSerialMonitor.Plan.Unsupported)
-        assertTrue(PyMcuSerialMonitor.plan("/dev/x", -1, false, true) is PyMcuSerialMonitor.Plan.Unsupported)
+        assertTrue(PyMcuSerialMonitor.plan("pymcu", "", 115_200) is PyMcuSerialMonitor.Plan.Unsupported)
+        assertTrue(PyMcuSerialMonitor.plan("pymcu", "/dev/x", 0) is PyMcuSerialMonitor.Plan.Unsupported)
+        assertTrue(PyMcuSerialMonitor.plan("pymcu", "/dev/x", -1) is PyMcuSerialMonitor.Plan.Unsupported)
     }
 
     // ── the console tab ──────────────────────────────────────────────────────

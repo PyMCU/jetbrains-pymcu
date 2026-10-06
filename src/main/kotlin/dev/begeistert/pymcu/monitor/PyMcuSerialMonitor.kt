@@ -1,29 +1,26 @@
 package dev.begeistert.pymcu.monitor
 
-import com.intellij.openapi.util.SystemInfo
+import com.intellij.execution.process.ProcessHandler
+import com.intellij.openapi.project.Project
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Reading what the firmware prints.
  *
  * A PyMCU program's `print()` goes out of a UART — the device and speed are
  * `stdout` and `stdout_baud` in `[tool.pymcu]`, defaulting to uart0 at 115200.
- * The plugin already parsed both and had nowhere to put them: build, flash, and
- * then leave the IDE for `screen` to see whether any of it worked.
  *
- * WHY it shells out to `stty` and `cat` instead of speaking serial itself: the
- * JVM has no serial support, so the alternative is bundling a library with
- * native binaries for every platform — a large dependency for reading bytes off
- * a character device that Unix already exposes as a file. `stty` sets the line
- * discipline, `cat` reads it, and the whole thing is inspectable in the console
- * it prints to.
+ * WHY the port lives in the driver: an earlier version assembled
+ * `stty && cat` here, which reads bytes but can never send any, fails on
+ * Windows, and duplicates the port rules `pymcu flash` already owns.
+ * `pymcu monitor` does the serial work — the same auto-detection, the same
+ * configured port, stdin forwarded to the board — so this file only builds the
+ * command line and tracks which consoles hold which port.
  *
- * The honest limitation is Windows, where the equivalent (`mode` plus a reader)
- * is not reliable enough to ship blind, and neither of us can test it. It says
- * so rather than half-working.
- *
- * A `pymcu monitor` command in the driver would be the better long-term home —
- * the driver already knows the port, the baud and how to auto-detect a board,
- * and VS Code would get the same feature for nothing.
+ * [sessions] exists for the flash path: a monitor that keeps the port open
+ * blocks avrdude on Windows and watches bootloader bytes elsewhere, so
+ * [pauseForFlash] empties the port before the write and [resumeAfterFlash]
+ * brings the monitor back — usually in time to catch the boot messages.
  */
 object PyMcuSerialMonitor {
 
@@ -36,45 +33,60 @@ object PyMcuSerialMonitor {
     }
 
     /**
-     * The command that streams [port] at [baud], or why it cannot be built.
-     *
-     * `raw` stops the terminal driver from rewriting the bytes; `-echo` stops it
-     * from posting back what we never send. Both matter: a firmware printing
-     * `\n` without `\r` comes out as a staircase otherwise.
+     * One open monitor console. [handler] is what a pause kills; the rest is
+     * what a resume needs to bring the same session back.
      */
-    fun plan(
-        port: String,
-        baud: Int,
-        windows: Boolean = SystemInfo.isWindows,
-        mac: Boolean = SystemInfo.isMac,
-    ): Plan {
-        if (windows) {
-            return Plan.Unsupported(
-                "Reading a serial port is not supported on Windows yet. Use a terminal " +
-                    "program such as PuTTY on $port at $baud baud."
-            )
-        }
+    data class Session(
+        val project: Project,
+        val port: String,
+        val baud: Int,
+        val handler: ProcessHandler,
+    )
+
+    /** Open monitor consoles, by port. Ports are machine-global; projects are not. */
+    private val sessions = ConcurrentHashMap<String, Session>()
+
+    /**
+     * The `pymcu monitor` invocation for [port] at [baud], or why it cannot be
+     * built. What the driver cannot do is decide for the user; what it can —
+     * platform quirks, send support, Windows — is its own problem now.
+     */
+    fun plan(executable: String, port: String, baud: Int): Plan {
         if (port.isBlank()) return Plan.Unsupported("No serial port to read from.")
         if (baud <= 0) return Plan.Unsupported("Baud rate must be a positive number.")
-
-        // -f on macOS, -F on GNU: the same flag with a different name, and the
-        // wrong one makes stty read the file as a script rather than a device.
-        val deviceFlag = if (mac) "-f" else "-F"
-        val quoted = shellQuote(port)
         return Plan.Command(
-            listOf(
-                "/bin/sh", "-c",
-                "stty $deviceFlag $quoted $baud raw -echo && exec cat $quoted",
-            )
+            listOf(executable, "monitor", "--port", port, "--baud", baud.toString())
         )
     }
 
     /** The title the console tab carries, so several boards stay distinguishable. */
     fun title(port: String, baud: Int): String = "${port.substringAfterLast('/')} · $baud baud"
 
+    // ── sessions ────────────────────────────────────────────────────────────
+
+    fun register(session: Session) {
+        sessions[session.port] = session
+    }
+
+    /** Drop [session] if it is still the one registered for its port. */
+    fun unregister(session: Session) {
+        sessions.remove(session.port, session)
+    }
+
     /**
-     * Single-quote for `/bin/sh`. Device paths do not normally need it, but the
-     * port is user-supplied and ends up inside a shell command.
+     * Kill every monitor holding [port] — it is about to belong to the
+     * programmer — and return the sessions so [resumeAfterFlash] can bring
+     * them back. Returns an empty list when nothing was listening.
      */
-    fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+    fun pauseForFlash(port: String): List<Session> {
+        val paused = mutableListOf<Session>()
+        sessions.remove(port)?.let { session ->
+            session.handler.destroyProcess()
+            paused += session
+        }
+        return paused
+    }
+
+    /** Visible for tests. */
+    fun sessionOn(port: String): Session? = sessions[port]
 }
