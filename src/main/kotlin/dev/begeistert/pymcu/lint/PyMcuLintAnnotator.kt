@@ -84,6 +84,11 @@ class PyMcuLintAnnotator : ExternalAnnotator<LintInput, LintReport>() {
         val document = file.viewProvider.document ?: return
 
         for (finding in findings) {
+            // `info` findings are confirmations, not problems — "`board` maps to
+            // the compat layer, no change needed" — and a squiggle on a line the
+            // user has nothing to fix reads as a defect. They still list in the
+            // PyMCU tool window's findings tree.
+            if (finding.severity == "info") continue
             val range = rangeOf(document, finding) ?: continue
             val message = if (finding.suggestion.isNotBlank())
                 "${finding.message}\n→ ${finding.suggestion}"
