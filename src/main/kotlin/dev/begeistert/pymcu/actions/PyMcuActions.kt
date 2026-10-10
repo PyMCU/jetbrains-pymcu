@@ -133,6 +133,20 @@ object PyMcuSyncTask {
      */
     fun execute(project: Project, indicator: ProgressIndicator?, packageManager: String? = null) {
         val basePath = project.basePath ?: return
+        if (PyMcuCli.effectivePackageManager(basePath, packageManager) == "pip") {
+            PyMcuCli.ensurePipEnvironment(basePath)?.let { create ->
+                indicator?.text = "Creating the project's virtual environment (${create.joinToString(" ")})…"
+                val venv = PyMcuCli.runIn(basePath, create.first(), create.drop(1), timeoutMs = 120_000)
+                if (!venv.started || !venv.ok) {
+                    PyMcuNotifications.warn(
+                        project, "PyMCU sync",
+                        "Could not create the project's virtual environment with " +
+                            "`${create.joinToString(" ")}`. Install Python 3 or create .venv yourself.",
+                    )
+                    return
+                }
+            }
+        }
         val command = PyMcuCli.syncCommand(basePath, packageManager)
 
         indicator?.text = "Installing dependencies (${command.joinToString(" ")})…"

@@ -170,9 +170,7 @@ object PyMcuCli {
      * then what the project itself shows, then the configured default.
      */
     fun syncCommand(basePath: String? = null, override: String? = null): List<String> {
-        val manager = override
-            ?: detectPackageManager(basePath)
-            ?: PyMcuSettings.getInstance().packageManager
+        val manager = effectivePackageManager(basePath, override)
         return when (manager) {
             "poetry" -> listOf("poetry", "install")
             "pipenv" -> listOf("pipenv", "install")
@@ -182,14 +180,44 @@ object PyMcuCli {
             // project itself, no dependencies, and exits 0. The sync then reports
             // success while nothing was installed. The driver's own Makefile uses
             // -r for this case; so does this.
-            "pip" -> if (basePath != null && File(basePath, "requirements.txt").isFile) {
-                listOf("pip", "install", "-r", "requirements.txt")
-            } else {
-                listOf("pip", "install", "-e", ".")
+            // Never a bare `pip`: on macOS there is often no `pip` on PATH at all
+            // (only `pip3`), and the one there is belongs to whichever Python was
+            // installed last, not to the project. The project's own interpreter
+            // with `-m pip` is the only spelling that installs into the project.
+            // [ensurePipEnvironment] creates `.venv` first when it is missing, the
+            // same thing `pymcu new --pkg-manager pip` does.
+            "pip" -> {
+                val python = pipPython(basePath)
+                if (basePath != null && File(basePath, "requirements.txt").isFile) {
+                    listOf(python, "-m", "pip", "install", "-r", "requirements.txt")
+                } else {
+                    listOf(python, "-m", "pip", "install", "-e", ".")
+                }
             }
             else -> listOf("uv", "sync")
         }
     }
+
+    /** The manager a sync of [basePath] will use, by the same precedence as [syncCommand]. */
+    fun effectivePackageManager(basePath: String?, override: String? = null): String =
+        override ?: detectPackageManager(basePath) ?: PyMcuSettings.getInstance().packageManager
+
+    /**
+     * The interpreter pip runs under: the project's virtualenv when it exists,
+     * otherwise the system Python 3 launcher (`python3`, or `py` on Windows).
+     */
+    fun pipPython(basePath: String?): String =
+        basePath?.let { dev.begeistert.pymcu.venv.PyMcuInterpreter.venvInterpreter(it)?.path }
+            ?: if (isWindows) "py" else "python3"
+
+    /**
+     * The command that creates the project's `.venv` for a pip sync, or null when
+     * one already exists. Installing without it would target the system Python,
+     * which Homebrew and most Linux distributions refuse (PEP 668).
+     */
+    fun ensurePipEnvironment(basePath: String): List<String>? =
+        if (dev.begeistert.pymcu.venv.PyMcuInterpreter.venvInterpreter(basePath) != null) null
+        else listOf(if (isWindows) "py" else "python3", "-m", "venv", ".venv")
 
     private fun File.readTextOrNull(): String? = try {
         readText()
