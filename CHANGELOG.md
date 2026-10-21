@@ -4,7 +4,7 @@ All notable changes to the PyMCU PyCharm plugin are documented here.
 
 ## [0.1.0-beta.1] - 2026-09-15
 
-Matches compiler release 0.1.0b1. Published to the beta channel.
+Matches compiler release 0.1.0b1. Available as a download from GitHub Releases; not yet on the JetBrains Marketplace.
 
 ### Fixed (navigation across the HAL's compile-time dispatch)
 - **Go To Declaration landed on another chip's HAL module.** `hal/avr/gpio/__init__.py`
